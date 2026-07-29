@@ -42,11 +42,35 @@ For original/main server updates:
 .\tools\push-to-github.ps1 -MainServer -Message "Describe the change"
 ```
 
+If PowerShell says scripts are disabled, use either of these:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\push-to-github.ps1 -MainServer -Message "Describe the change"
+```
+
+or run:
+
+```cmd
+tools\push-main-to-github.cmd "Describe the change"
+```
+
 For testing server updates:
 
 ```powershell
 git switch testing
 .\tools\push-to-github.ps1 -TestingServer -Message "Describe the change"
+```
+
+If PowerShell says scripts are disabled:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\push-to-github.ps1 -TestingServer -Message "Describe the change"
+```
+
+or run:
+
+```cmd
+tools\push-testing-to-github.cmd "Describe the change"
 ```
 
 The repository intentionally ignores live `.env` files, ISO images, raw disk images, downloads, backups, and local KVM screenshots.

@@ -1,7 +1,8 @@
 param(
     [string]$Message = "",
     [switch]$MainServer,
-    [switch]$TestingServer
+    [switch]$TestingServer,
+    [string]$Remote = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,9 +27,15 @@ if (-not $pending) {
 git commit -m $Message
 
 if ($MainServer) {
-    git push origin HEAD:main
+    if ([string]::IsNullOrWhiteSpace($Remote)) { $Remote = "original" }
+    git push $Remote HEAD:main
 } elseif ($TestingServer) {
-    git push origin HEAD:testing
+    if ([string]::IsNullOrWhiteSpace($Remote)) { $Remote = "testing-remote" }
+    git push $Remote HEAD:testing
 } else {
+    if (-not [string]::IsNullOrWhiteSpace($Remote)) {
+        git push $Remote
+        exit 0
+    }
     git push
 }

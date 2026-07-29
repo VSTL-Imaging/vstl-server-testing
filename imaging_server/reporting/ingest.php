@@ -1,0 +1,169 @@
+<?php
+declare(strict_types=1);
+
+header('Content-Type: application/json');
+$tokenFile = '/etc/vstl-report-token';
+$expected = is_readable($tokenFile) ? trim((string)file_get_contents($tokenFile)) : '';
+$provided = (string)($_SERVER['HTTP_X_VSTL_REPORT_TOKEN'] ?? '');
+if ($expected === '' || !hash_equals($expected, $provided)) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'message' => 'unauthorized']);
+    exit;
+}
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'message' => 'POST required']);
+    exit;
+}
+$raw = (string)file_get_contents('php://input');
+if ($raw === '' || strlen($raw) > 10 * 1024 * 1024) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'invalid payload size']);
+    exit;
+}
+$payload = json_decode($raw, true);
+if (!is_array($payload)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'invalid JSON']);
+    exit;
+}
+
+function vstl_text($value): string {
+    if ($value === null) {
+        return '';
+    }
+    if (is_bool($value)) {
+        return $value ? 'true' : 'false';
+    }
+    return trim((string)$value);
+}
+
+function vstl_wipe_standard(string $method): string {
+    $standards = [
+        'NVMe_SANITIZE_BLOCK_ERASE' => 'NIST SP 800-88 Purge',
+        'NVMe_SANITIZE_CRYPTO_ERASE' => 'NIST SP 800-88 Purge',
+        'NVMe_SANITIZE_OVERWRITE' => 'NIST SP 800-88 Purge',
+        'NVMe_FORMAT_CRYPTO' => 'NIST SP 800-88 Purge',
+        'NVMe_FORMAT_USER_DATA' => 'NIST SP 800-88 Clear',
+        'ATA_SANITIZE_BLOCK_ERASE' => 'NIST SP 800-88 Purge',
+        'ATA_SANITIZE_CRYPTO_SCRAMBLE' => 'NIST SP 800-88 Purge',
+        'ATA_SECURITY_ERASE_ENHANCED' => 'NIST SP 800-88 Purge',
+        'ATA_SECURITY_ERASE' => 'NIST SP 800-88 Purge',
+        'NWIPE_DOD_3PASS' => 'DoD 5220.22-M 3-pass',
+    ];
+    return $standards[$method] ?? 'Certified data sanitization';
+}
+
+function vstl_sort_recursive($value) {
+    if (!is_array($value)) {
+        return $value;
+    }
+    $isList = array_keys($value) === range(0, count($value) - 1);
+    foreach ($value as $key => $child) {
+        $value[$key] = vstl_sort_recursive($child);
+    }
+    if (!$isList) {
+        ksort($value);
+    }
+    return $value;
+}
+
+function vstl_hash_json(array $value): string {
+    return hash(
+        'sha256',
+        json_encode(vstl_sort_recursive($value), JSON_UNESCAPED_SLASHES)
+    );
+}
+
+function vstl_date_token(string $value): string {
+    if (preg_match('/^(\d{4})-?(\d{2})-?(\d{2})/', $value, $matches)) {
+        return $matches[1] . $matches[2] . $matches[3];
+    }
+    return gmdate('Ymd');
+}
+
+function vstl_issue_local_secure_erase_certificate(array &$payload): bool {
+    if (!isset($payload['phase3']) || !is_array($payload['phase3'])) {
+        return false;
+    }
+    if (!isset($payload['phase3']['erase']) || !is_array($payload['phase3']['erase'])) {
+        return false;
+    }
+    $erase =& $payload['phase3']['erase'];
+    if (($erase['ok'] ?? false) !== true) {
+        return false;
+    }
+    $existing = vstl_text($erase['certificate_id'] ?? '')
+        ?: vstl_text($erase['secure_erase_reg_id'] ?? '')
+        ?: vstl_text($payload['secure_erase_reg_id'] ?? '');
+    if ($existing !== '') {
+        return false;
+    }
+
+    $method = vstl_text($erase['method'] ?? '');
+    $standard = vstl_wipe_standard($method);
+    $basis = [
+        'schema' => 'vstl_secure_erase_report_certificate_v1',
+        'serial_no' => vstl_text($payload['serial_no'] ?? ''),
+        'mac_id' => vstl_text($payload['mac_id'] ?? ''),
+        'bench_id' => vstl_text($payload['bench_id'] ?? ''),
+        'brand' => vstl_text($payload['brand'] ?? ''),
+        'model' => vstl_text($payload['model'] ?? ''),
+        'device' => vstl_text($erase['device'] ?? ''),
+        'wipe_method' => $method,
+        'wipe_standard' => $standard,
+        'duration_sec' => (int)($erase['duration_sec'] ?? 0),
+        'session_started_at' => vstl_text($payload['session_started_at'] ?? ''),
+        'source' => 'reporting_ingest_backfill',
+    ];
+    $verificationHash = vstl_hash_json($basis);
+    $certificateId = 'SE-' . vstl_date_token($basis['session_started_at'])
+        . '-' . strtoupper(substr($verificationHash, 0, 16));
+    $certificate = array_merge($basis, [
+        'certificate_id' => $certificateId,
+        'verification_hash' => $verificationHash,
+        'issued_at' => gmdate('c'),
+        'issuer' => 'VSTL Reporting Local Certificate',
+        'certificate_status' => 'issued',
+        'remote_post_ok' => false,
+        'remote_error' => 'cloud certificate response was missing; issued by reporting ingest',
+    ]);
+
+    $erase['certificate_id'] = $certificateId;
+    $erase['secure_erase_reg_id'] = $certificateId;
+    $erase['verification_hash'] = $verificationHash;
+    $erase['wipe_standard'] = $standard;
+    $erase['certificate_status'] = 'issued';
+    $erase['remote_post_ok'] = false;
+    $erase['certificate'] = $certificate;
+    $payload['secure_erase_reg_id'] = $certificateId;
+    return true;
+}
+
+$localCertificateIssued = vstl_issue_local_secure_erase_certificate($payload);
+
+$record = [
+    'received_at' => gmdate('c'),
+    'remote_address' => (string)($_SERVER['REMOTE_ADDR'] ?? ''),
+    'payload' => $payload,
+];
+$line = json_encode($record, JSON_UNESCAPED_SLASHES) . PHP_EOL;
+$path = '/var/lib/vstl-reports/audits.jsonl';
+$handle = fopen($path, 'ab');
+if ($handle === false || !flock($handle, LOCK_EX) || fwrite($handle, $line) === false) {
+    if (is_resource($handle)) {
+        fclose($handle);
+    }
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'storage failure']);
+    exit;
+}
+fflush($handle);
+flock($handle, LOCK_UN);
+fclose($handle);
+echo json_encode([
+    'success' => true,
+    'message' => $localCertificateIssued
+        ? 'audit stored; local secure-erase certificate issued'
+        : 'audit stored',
+]);

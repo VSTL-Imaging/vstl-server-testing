@@ -1,0 +1,451 @@
+19:15:57.309905 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:15:59.318873 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:16:00.132756 26:8c:3d:43:92:b4 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 356: (tos 0x10, ttl 64, id 0, offset 0, flags [DF], proto UDP (17), length 342)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 26:8c:3d:43:92:b4, length 314, xid 0x46d24791, Flags [none] (0x0000)
+	  Client-Ethernet-Address 26:8c:3d:43:92:b4
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Request
+	    Client-ID (61), length 7: ether 26:8c:3d:43:92:b4
+	    Requested-IP (50), length 4: 10.255.254.106
+	    MSZ (57), length 2: 1500
+	    Vendor-Class (60), length 15: "android-dhcp-13"
+	    Hostname (12), length 17: "Redmi-Note-10-Pro"
+	    Parameter-Request (55), length 12: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      MTU (26), BR (28), Lease-Time (51), RN (58)
+	      RB (59), Vendor-Option (43), URL (114), Unknown (108)
+19:16:00.454403 10:65:30:66:c1:3b > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 389: (tos 0x0, ttl 64, id 4369, offset 0, flags [none], proto UDP (17), length 375)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:65:30:66:c1:3b, length 347, xid 0xffde1111, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:65:30:66:c1:3b
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1464
+	    Parameter-Request (55), length 35: 
+	      Subnet-Mask (1), Time-Zone (2), Default-Gateway (3), Time-Server (4)
+	      IEN-Name-Server (5), Domain-Name-Server (6), Hostname (12), BS (13)
+	      Domain-Name (15), RP (17), EP (18), RSZ (22)
+	      TTL (23), BR (28), YD (40), YS (41)
+	      NTP (42), Vendor-Option (43), Requested-IP (50), Lease-Time (51)
+	      Server-ID (54), RN (58), RB (59), Vendor-Class (60)
+	      TFTP (66), BF (67), GUID (97), Unknown (128)
+	      Unknown (129), Unknown (130), Unknown (131), Unknown (132)
+	      Unknown (133), Unknown (134), Unknown (135)
+	    GUID (97), length 17: 0.68.69.76.76.70.0.16.56.128.49.182.192.79.52.81.50
+	    NDI (94), length 3: 1.3.16
+	    ARCH (93), length 2: 7
+	    Vendor-Class (60), length 32: "PXEClient:Arch:00007:UNDI:003016"
+19:16:00.455086 08:f1:ea:7c:a8:70 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 362: (tos 0xc0, ttl 64, id 54642, offset 0, flags [none], proto UDP (17), length 348)
+    10.255.254.75.67 > 255.255.255.255.68: [bad udp cksum 0x0aa4 -> 0x2c63!] BOOTP/DHCP, Reply, length 320, xid 0xffde1111, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.245
+	  Server-IP 10.255.254.75
+	  Client-Ethernet-Address 10:65:30:66:c1:3b
+	  sname "vstl-imaging"
+	  file "intel.efi"
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.75
+	    Lease-Time (51), length 4: 600
+	    RN (58), length 4: 300
+	    RB (59), length 4: 525
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    BR (28), length 4: 10.255.254.255
+	    BF (67), length 10: "intel.efi^@"
+	    TFTP (66), length 14: "10.255.254.75^@"
+	    Domain-Name-Server (6), length 4: 10.255.254.1
+	    Default-Gateway (3), length 4: 10.255.254.1
+19:16:01.318814 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:16:04.350702 10:65:30:66:c1:3b > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 401: (tos 0x0, ttl 64, id 4370, offset 0, flags [none], proto UDP (17), length 387)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:65:30:66:c1:3b, length 359, xid 0xffde1111, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:65:30:66:c1:3b
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Request
+	    Server-ID (54), length 4: 10.255.254.75
+	    Requested-IP (50), length 4: 10.255.254.245
+	    MSZ (57), length 2: 65280
+	    Parameter-Request (55), length 35: 
+	      Subnet-Mask (1), Time-Zone (2), Default-Gateway (3), Time-Server (4)
+	      IEN-Name-Server (5), Domain-Name-Server (6), Hostname (12), BS (13)
+	      Domain-Name (15), RP (17), EP (18), RSZ (22)
+	      TTL (23), BR (28), YD (40), YS (41)
+	      NTP (42), Vendor-Option (43), Requested-IP (50), Lease-Time (51)
+	      Server-ID (54), RN (58), RB (59), Vendor-Class (60)
+	      TFTP (66), BF (67), GUID (97), Unknown (128)
+	      Unknown (129), Unknown (130), Unknown (131), Unknown (132)
+	      Unknown (133), Unknown (134), Unknown (135)
+	    GUID (97), length 17: 0.68.69.76.76.70.0.16.56.128.49.182.192.79.52.81.50
+	    NDI (94), length 3: 1.3.16
+	    ARCH (93), length 2: 7
+	    Vendor-Class (60), length 32: "PXEClient:Arch:00007:UNDI:003016"
+19:16:04.351685 08:f1:ea:7c:a8:70 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 362: (tos 0xc0, ttl 64, id 55502, offset 0, flags [none], proto UDP (17), length 348)
+    10.255.254.75.67 > 255.255.255.255.68: [bad udp cksum 0x0aa4 -> 0x2963!] BOOTP/DHCP, Reply, length 320, xid 0xffde1111, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.245
+	  Server-IP 10.255.254.75
+	  Client-Ethernet-Address 10:65:30:66:c1:3b
+	  sname "vstl-imaging"
+	  file "intel.efi"
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: ACK
+	    Server-ID (54), length 4: 10.255.254.75
+	    Lease-Time (51), length 4: 600
+	    RN (58), length 4: 300
+	    RB (59), length 4: 525
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    BR (28), length 4: 10.255.254.255
+	    BF (67), length 10: "intel.efi^@"
+	    TFTP (66), length 14: "10.255.254.75^@"
+	    Domain-Name-Server (6), length 4: 10.255.254.1
+	    Default-Gateway (3), length 4: 10.255.254.1
+19:16:04.353050 10:65:30:66:c1:3b > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 81: (tos 0x0, ttl 64, id 4371, offset 0, flags [none], proto UDP (17), length 67)
+    10.255.254.245.1309 > 10.255.254.75.69: [udp sum ok] TFTP, length 39, RRQ "intel.efi" octet tsize 0 blksize 1468
+19:16:06.309868 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:16:06.310943 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:16:09.309857 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:16:09.310935 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:16:28.545438 26:8c:3d:43:92:b4 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 356: (tos 0x10, ttl 64, id 0, offset 0, flags [DF], proto UDP (17), length 342)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 26:8c:3d:43:92:b4, length 314, xid 0x98c033e0, Flags [none] (0x0000)
+	  Client-Ethernet-Address 26:8c:3d:43:92:b4
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Request
+	    Client-ID (61), length 7: ether 26:8c:3d:43:92:b4
+	    Requested-IP (50), length 4: 10.255.254.106
+	    MSZ (57), length 2: 1500
+	    Vendor-Class (60), length 15: "android-dhcp-13"
+	    Hostname (12), length 17: "Redmi-Note-10-Pro"
+	    Parameter-Request (55), length 12: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      MTU (26), BR (28), Lease-Time (51), RN (58)
+	      RB (59), Vendor-Option (43), URL (114), Unknown (108)
+19:16:30.309917 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:16:30.310960 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:16:33.309899 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:16:33.310929 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:16:36.309906 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:16:36.310985 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0xee7b01d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:16:40.318953 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:16:42.338980 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xee7b01d, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:16:44.001193 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 74: (tos 0x0, ttl 64, id 52051, offset 0, flags [DF], proto TCP (6), length 60)
+    10.255.254.75.41532 > 185.34.3.207.80: Flags [S], cksum 0xc66a (incorrect -> 0x0b0e), seq 2693589914, win 64240, options [mss 1460,sackOK,TS val 1011421384 ecr 0,nop,wscale 7], length 0
+19:16:44.009623 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 74: (tos 0x0, ttl 149, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+    185.34.3.207.80 > 10.255.254.75.41532: Flags [S.], cksum 0xbfd0 (correct), seq 949746371, ack 2693589915, win 65160, options [mss 1460,sackOK,TS val 1543944238 ecr 1011421384,nop,wscale 7], length 0
+19:16:44.009674 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 52052, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.41532 > 185.34.3.207.80: Flags [.], cksum 0xc662 (incorrect -> 0xeb27), seq 1, ack 1, win 502, options [nop,nop,TS val 1011421392 ecr 1543944238], length 0
+19:16:44.009916 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 320: (tos 0x0, ttl 64, id 52053, offset 0, flags [DF], proto TCP (6), length 306)
+    10.255.254.75.41532 > 185.34.3.207.80: Flags [P.], cksum 0xc760 (incorrect -> 0xd48d), seq 1:255, ack 1, win 502, options [nop,nop,TS val 1011421393 ecr 1543944238], length 254: HTTP, length: 254
+	GET /generate_204?t=1780586204 HTTP/1.1
+	Host: 185.34.3.207
+	User-Agent: Go-http-client/1.1
+	Cache-Control: no-cache, no-store, must-revalidate, no-transform, max-age=0
+	X-Tailscale-Challenge: ts_185.34.3.207
+	Accept-Encoding: gzip
+	Connection: close
+	
+19:16:44.009939 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 74: (tos 0x0, ttl 64, id 52974, offset 0, flags [DF], proto TCP (6), length 60)
+    10.255.254.75.50014 > 185.34.3.232.80: Flags [S], cksum 0xc683 (incorrect -> 0x63ad), seq 3323336001, win 64240, options [mss 1460,sackOK,TS val 2709250698 ecr 0,nop,wscale 7], length 0
+19:16:44.018113 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 74: (tos 0x0, ttl 149, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+    185.34.3.232.80 > 10.255.254.75.50014: Flags [S.], cksum 0x42bc (correct), seq 39462490, ack 3323336002, win 65160, options [mss 1460,sackOK,TS val 2694730741 ecr 2709250698,nop,wscale 7], length 0
+19:16:44.018164 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 52975, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.50014 > 185.34.3.232.80: Flags [.], cksum 0xc67b (incorrect -> 0x6e13), seq 1, ack 1, win 502, options [nop,nop,TS val 2709250706 ecr 2694730741], length 0
+19:16:44.018363 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 74: (tos 0x0, ttl 64, id 48354, offset 0, flags [DF], proto TCP (6), length 60)
+    10.255.254.75.43766 > 103.6.84.152.80: Flags [S], cksum 0xc517 (incorrect -> 0x3f4a), seq 4146005393, win 64240, options [mss 1460,sackOK,TS val 295800643 ecr 0,nop,wscale 7], length 0
+19:16:44.018384 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 320: (tos 0x0, ttl 64, id 52976, offset 0, flags [DF], proto TCP (6), length 306)
+    10.255.254.75.50014 > 185.34.3.232.80: Flags [P.], cksum 0xc779 (incorrect -> 0x597c), seq 1:255, ack 1, win 502, options [nop,nop,TS val 2709250706 ecr 2694730741], length 254: HTTP, length: 254
+	GET /generate_204?t=1780586204 HTTP/1.1
+	Host: 185.34.3.232
+	User-Agent: Go-http-client/1.1
+	Cache-Control: no-cache, no-store, must-revalidate, no-transform, max-age=0
+	X-Tailscale-Challenge: ts_185.34.3.232
+	Accept-Encoding: gzip
+	Connection: close
+	
+19:16:44.018550 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 149, id 15223, offset 0, flags [DF], proto TCP (6), length 52)
+    185.34.3.207.80 > 10.255.254.75.41532: Flags [.], cksum 0xea19 (correct), seq 1, ack 255, win 508, options [nop,nop,TS val 1543944247 ecr 1011421393], length 0
+19:16:44.018735 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 274: (tos 0x0, ttl 149, id 15224, offset 0, flags [DF], proto TCP (6), length 260)
+    185.34.3.207.80 > 10.255.254.75.41532: Flags [P.], cksum 0xdaef (correct), seq 1:209, ack 255, win 508, options [nop,nop,TS val 1543944247 ecr 1011421393], length 208: HTTP, length: 208
+	HTTP/1.1 204 No Content
+	Cache-Control: no-cache, no-store, must-revalidate, no-transform, max-age=0
+	X-Tailscale-Response: response ts_185.34.3.207
+	Date: Thu, 04 Jun 2026 15:16:44 GMT
+	Connection: close
+	
+19:16:44.018735 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 149, id 15225, offset 0, flags [DF], proto TCP (6), length 52)
+    185.34.3.207.80 > 10.255.254.75.41532: Flags [F.], cksum 0xe948 (correct), seq 209, ack 255, win 508, options [nop,nop,TS val 1543944247 ecr 1011421393], length 0
+19:16:44.018771 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 52054, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.41532 > 185.34.3.207.80: Flags [.], cksum 0xc662 (incorrect -> 0xe948), seq 255, ack 209, win 501, options [nop,nop,TS val 1011421401 ecr 1543944247], length 0
+19:16:44.018840 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 52055, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.41532 > 185.34.3.207.80: Flags [F.], cksum 0xc662 (incorrect -> 0xe945), seq 255, ack 210, win 501, options [nop,nop,TS val 1011421402 ecr 1543944247], length 0
+19:16:44.027049 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 149, id 3486, offset 0, flags [DF], proto TCP (6), length 52)
+    185.34.3.232.80 > 10.255.254.75.50014: Flags [.], cksum 0x6d07 (correct), seq 1, ack 255, win 508, options [nop,nop,TS val 2694730749 ecr 2709250706], length 0
+19:16:44.027081 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 149, id 15226, offset 0, flags [DF], proto TCP (6), length 52)
+    185.34.3.207.80 > 10.255.254.75.41532: Flags [.], cksum 0xe936 (correct), seq 210, ack 256, win 508, options [nop,nop,TS val 1543944255 ecr 1011421402], length 0
+19:16:44.027277 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 274: (tos 0x0, ttl 149, id 3487, offset 0, flags [DF], proto TCP (6), length 260)
+    185.34.3.232.80 > 10.255.254.75.50014: Flags [P.], cksum 0x5ae1 (correct), seq 1:209, ack 255, win 508, options [nop,nop,TS val 2694730750 ecr 2709250706], length 208: HTTP, length: 208
+	HTTP/1.1 204 No Content
+	Cache-Control: no-cache, no-store, must-revalidate, no-transform, max-age=0
+	X-Tailscale-Response: response ts_185.34.3.232
+	Date: Thu, 04 Jun 2026 15:16:44 GMT
+	Connection: close
+	
+19:16:44.027277 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 149, id 3488, offset 0, flags [DF], proto TCP (6), length 52)
+    185.34.3.232.80 > 10.255.254.75.50014: Flags [F.], cksum 0x6c35 (correct), seq 209, ack 255, win 508, options [nop,nop,TS val 2694730750 ecr 2709250706], length 0
+19:16:44.027304 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 52977, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.50014 > 185.34.3.232.80: Flags [.], cksum 0xc67b (incorrect -> 0x6c34), seq 255, ack 209, win 501, options [nop,nop,TS val 2709250715 ecr 2694730750], length 0
+19:16:44.027368 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 52978, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.50014 > 185.34.3.232.80: Flags [F.], cksum 0xc67b (incorrect -> 0x6c32), seq 255, ack 210, win 501, options [nop,nop,TS val 2709250715 ecr 2694730750], length 0
+19:16:44.036451 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 149, id 3489, offset 0, flags [DF], proto TCP (6), length 52)
+    185.34.3.232.80 > 10.255.254.75.50014: Flags [.], cksum 0x6c22 (correct), seq 210, ack 256, win 508, options [nop,nop,TS val 2694730759 ecr 2709250715], length 0
+19:16:44.124652 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 74: (tos 0x0, ttl 149, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+    103.6.84.152.80 > 10.255.254.75.43766: Flags [S.], cksum 0x64ca (correct), seq 3365548683, ack 4146005394, win 65160, options [mss 1460,sackOK,TS val 1529053325 ecr 295800643,nop,wscale 7], length 0
+19:16:44.124685 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 48355, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.43766 > 103.6.84.152.80: Flags [.], cksum 0xc50f (incorrect -> 0x8fbf), seq 1, ack 1, win 502, options [nop,nop,TS val 295800749 ecr 1529053325], length 0
+19:16:44.124863 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 74: (tos 0x0, ttl 64, id 5334, offset 0, flags [DF], proto TCP (6), length 60)
+    10.255.254.75.56484 > 185.34.3.75.80: Flags [S], cksum 0xc5e6 (incorrect -> 0xfa8c), seq 2578739248, win 64240, options [mss 1460,sackOK,TS val 3653159985 ecr 0,nop,wscale 7], length 0
+19:16:44.124889 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 320: (tos 0x0, ttl 64, id 48356, offset 0, flags [DF], proto TCP (6), length 306)
+    10.255.254.75.43766 > 103.6.84.152.80: Flags [P.], cksum 0xc60d (incorrect -> 0x7c28), seq 1:255, ack 1, win 502, options [nop,nop,TS val 295800750 ecr 1529053325], length 254: HTTP, length: 254
+	GET /generate_204?t=1780586204 HTTP/1.1
+	Host: 103.6.84.152
+	User-Agent: Go-http-client/1.1
+	Cache-Control: no-cache, no-store, must-revalidate, no-transform, max-age=0
+	X-Tailscale-Challenge: ts_103.6.84.152
+	Accept-Encoding: gzip
+	Connection: close
+	
+19:16:44.130956 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 74: (tos 0x0, ttl 149, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+    185.34.3.75.80 > 10.255.254.75.56484: Flags [S.], cksum 0x1343 (correct), seq 588611962, ack 2578739249, win 65160, options [mss 1460,sackOK,TS val 3894105845 ecr 3653159985,nop,wscale 7], length 0
+19:16:44.131005 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 5335, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.56484 > 185.34.3.75.80: Flags [.], cksum 0xc5de (incorrect -> 0x3e9c), seq 1, ack 1, win 502, options [nop,nop,TS val 3653159991 ecr 3894105845], length 0
+19:16:44.131258 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 74: (tos 0x0, ttl 64, id 46402, offset 0, flags [DF], proto TCP (6), length 60)
+    10.255.254.75.33202 > 205.147.105.78.80: Flags [S], cksum 0x405b (incorrect -> 0x2d32), seq 2925730508, win 64240, options [mss 1460,sackOK,TS val 1152536524 ecr 0,nop,wscale 7], length 0
+19:16:44.131295 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 318: (tos 0x0, ttl 64, id 5336, offset 0, flags [DF], proto TCP (6), length 304)
+    10.255.254.75.56484 > 185.34.3.75.80: Flags [P.], cksum 0xc6da (incorrect -> 0xd3b3), seq 1:253, ack 1, win 502, options [nop,nop,TS val 3653159991 ecr 3894105845], length 252: HTTP, length: 252
+	GET /generate_204?t=1780586204 HTTP/1.1
+	Host: 185.34.3.75
+	User-Agent: Go-http-client/1.1
+	Cache-Control: no-cache, no-store, must-revalidate, no-transform, max-age=0
+	X-Tailscale-Challenge: ts_185.34.3.75
+	Accept-Encoding: gzip
+	Connection: close
+	
+19:16:44.137624 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 149, id 26806, offset 0, flags [DF], proto TCP (6), length 52)
+    185.34.3.75.80 > 10.255.254.75.56484: Flags [.], cksum 0x3d94 (correct), seq 1, ack 253, win 508, options [nop,nop,TS val 3894105851 ecr 3653159991], length 0
+19:16:44.137733 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 273: (tos 0x0, ttl 149, id 26807, offset 0, flags [DF], proto TCP (6), length 259)
+    185.34.3.75.80 > 10.255.254.75.56484: Flags [P.], cksum 0x8e38 (correct), seq 1:208, ack 253, win 508, options [nop,nop,TS val 3894105851 ecr 3653159991], length 207: HTTP, length: 207
+	HTTP/1.1 204 No Content
+	Cache-Control: no-cache, no-store, must-revalidate, no-transform, max-age=0
+	X-Tailscale-Response: response ts_185.34.3.75
+	Date: Thu, 04 Jun 2026 15:16:44 GMT
+	Connection: close
+	
+19:16:44.137733 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 149, id 26808, offset 0, flags [DF], proto TCP (6), length 52)
+    185.34.3.75.80 > 10.255.254.75.56484: Flags [F.], cksum 0x3cc4 (correct), seq 208, ack 253, win 508, options [nop,nop,TS val 3894105851 ecr 3653159991], length 0
+19:16:44.137760 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 5337, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.56484 > 185.34.3.75.80: Flags [.], cksum 0xc5de (incorrect -> 0x3cc6), seq 253, ack 208, win 501, options [nop,nop,TS val 3653159997 ecr 3894105851], length 0
+19:16:44.137905 08:f1:ea:7c:a8:70 > 68:cc:ae:46:6c:3d, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 64, id 5338, offset 0, flags [DF], proto TCP (6), length 52)
+    10.255.254.75.56484 > 185.34.3.75.80: Flags [F.], cksum 0xc5de (incorrect -> 0x3cc3), seq 253, ack 209, win 501, options [nop,nop,TS val 3653159998 ecr 3894105851], length 0
+19:16:44.143842 68:cc:ae:46:6c:3d > 08:f1:ea:7c:a8:70, ethertype IPv4 (0x0800), length 66: (tos 0x0, ttl 149, id 26809, offset 0, flags [DF], proto TCP (6), length 52)
+    185.34.3.75.80 > 10.255.254.75.56484: Flags [.], cksum 0x3cb6 (correct), seq 209, ack 254, win 508, options [nop,nop,TS val 3894105857 ecr 3653159998], length 0

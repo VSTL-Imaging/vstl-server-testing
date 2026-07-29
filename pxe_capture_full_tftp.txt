@@ -1,0 +1,233 @@
+19:18:47.311095 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xd34ac620, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:18:50.310445 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xd34ac620, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:18:52.319092 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xd34ac620, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:18:54.758654 3a:77:fc:79:53:7d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 346: (tos 0x10, ttl 64, id 0, offset 0, flags [DF], proto UDP (17), length 332)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 3a:77:fc:79:53:7d, length 304, xid 0x8edbd5e4, Flags [none] (0x0000)
+	  Client-Ethernet-Address 3a:77:fc:79:53:7d
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Request
+	    Client-ID (61), length 7: ether 3a:77:fc:79:53:7d
+	    Requested-IP (50), length 4: 10.255.254.111
+	    MSZ (57), length 2: 1500
+	    Vendor-Class (60), length 15: "android-dhcp-15"
+	    Hostname (12), length 8: "Redmi-12"
+	    Parameter-Request (55), length 12: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      MTU (26), BR (28), Lease-Time (51), RN (58)
+	      RB (59), Vendor-Option (43), URL (114), Unknown (108)
+19:18:57.310039 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xd34ac620, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:18:57.311069 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0xd34ac620, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:19:00.310111 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0xd34ac620, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:19:00.311230 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0xd34ac620, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:19:03.310253 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x91df0a6d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:19:03.311337 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0x91df0a6d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:19:05.319134 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x91df0a6d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:19:05.320209 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0x91df0a6d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:19:08.310120 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x91df0a6d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:19:08.311221 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0x91df0a6d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:19:10.154789 10:65:30:66:c1:3b > 33:33:00:00:00:02, ethertype IPv6 (0x86dd), length 62: (hlim 255, next-header ICMPv6 (58) payload length: 8) :: > ff02::2: [icmp6 sum ok] ICMP6, router solicitation, length 8
+19:19:12.319125 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x91df0a6d, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:19:14.154158 10:65:30:66:c1:3b > 33:33:00:00:00:02, ethertype IPv6 (0x86dd), length 62: (hlim 255, next-header ICMPv6 (58) payload length: 8) :: > ff02::2: [icmp6 sum ok] ICMP6, router solicitation, length 8
+19:19:15.319123 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x91df0a6d, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:19:15.577934 10:65:30:66:c1:3b > 33:33:ff:66:c1:3b, ethertype IPv6 (0x86dd), length 86: (hlim 1, next-header Options (0) payload length: 32) fe80::1265:30ff:fe66:c13b > ff02::1:ff66:c13b: HBH (rtalert: 0x0000) (padn) [icmp6 sum ok] ICMP6, multicast listener reportmax resp delay: 0 addr: ff02::1:ff66:c13b

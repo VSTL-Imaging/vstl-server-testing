@@ -1,0 +1,100 @@
+19:14:45.309754 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x1504911d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:14:48.309764 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x1504911d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:14:49.316270 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0x1504911d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:14:50.309778 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x1504911d, Flags [Broadcast] (0x8000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:14:50.310846 68:cc:ae:46:6c:3d > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 351: (tos 0x10, ttl 16, id 0, offset 0, flags [none], proto UDP (17), length 337)
+    10.255.254.1.67 > 255.255.255.255.68: [udp sum ok] BOOTP/DHCP, Reply, length 309, xid 0x1504911d, Flags [Broadcast] (0x8000)
+	  Your-IP 10.255.254.127
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Offer
+	    Server-ID (54), length 4: 10.255.254.1
+	    Lease-Time (51), length 4: 604800
+	    Subnet-Mask (1), length 4: 255.255.255.0
+	    Default-Gateway (3), length 4: 10.255.254.1
+	    Domain-Name-Server (6), length 8: 213.42.20.20,195.229.241.222
+	    RN (58), length 4: 302400
+	    RB (59), length 4: 529200
+	    Unknown (224), length 17: 70.71.84.52.48.70.84.75.50.53.48.57.65.83.49.72.0
+19:14:54.338837 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x1504911d, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)
+19:14:57.309722 10:5a:95:e3:b1:20 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 327: (tos 0x0, ttl 64, id 0, offset 0, flags [none], proto UDP (17), length 313)
+    0.0.0.0.68 > 255.255.255.255.67: [udp sum ok] BOOTP/DHCP, Request from 10:5a:95:e3:b1:20, length 285, xid 0x1504911d, Flags [none] (0x0000)
+	  Client-Ethernet-Address 10:5a:95:e3:b1:20
+	  Vendor-rfc1048 Extensions
+	    Magic Cookie 0x63825363
+	    DHCP-Message (53), length 1: Discover
+	    MSZ (57), length 2: 1024
+	    Client-ID (61), length 7: ether 10:5a:95:e3:b1:20
+	    Hostname (12), length 3: "IPC"
+	    Vendor-Class (60), length 8: "MSFT 5.0"
+	    Parameter-Request (55), length 11: 
+	      Subnet-Mask (1), Default-Gateway (3), Domain-Name-Server (6), Domain-Name (15)
+	      Vendor-Option (43), Netbios-Name-Server (44), Netbios-Node (46), Netbios-Scope (47)
+	      Static-Route (33), Classless-Static-Route (121), Classless-Static-Route-Microsoft (249)

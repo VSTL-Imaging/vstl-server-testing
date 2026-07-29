@@ -1,0 +1,25 @@
+--- a/drivers/net/ethernet/intel/e1000e/netdev.c
++++ b/drivers/net/ethernet/intel/e1000e/netdev.c
+@@
+ static int debug = -1;
+ module_param(debug, int, 0);
+ MODULE_PARM_DESC(debug, "Debug level (0=none,...,16=all)");
++
++static bool allow_bad_nvm;
++module_param(allow_bad_nvm, bool, 0);
++MODULE_PARM_DESC(allow_bad_nvm,
++	"Allow invalid NVM checksum only on Intel I219-LM4 (8086:15d7)");
+@@
+ 		if (e1000_validate_nvm_checksum(&adapter->hw) >= 0)
+ 			break;
+ 		if (i == 2) {
++			if (allow_bad_nvm &&
++			    pdev->vendor == PCI_VENDOR_ID_INTEL &&
++			    pdev->device == E1000_DEV_ID_PCH_SPT_I219_LM4) {
++				dev_warn(&pdev->dev,
++					 "VSTL: bypassing invalid NVM checksum for Intel I219-LM4; NVM was not modified\n");
++				break;
++			}
+ 			dev_err(&pdev->dev, "The NVM Checksum Is Not Valid\n");
+ 			err = -EIO;
+ 			goto err_eeprom;

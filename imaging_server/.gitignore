@@ -1,0 +1,8 @@
+# Local override: ensure dist/ tarball ships with each deploy.
+# 2026-05-12: parent /app/.gitignore globally ignores `dist/`, which means
+# `tools/build_bundle.sh` output never reaches production. Override with
+# negative pattern so the imaging-server bundle DOES go out, while
+# preserving the dist/ ignore for the rest of the repo.
+!dist/
+!dist/vstl-imaging-phase1.tar.gz
+!dist/vstl-imaging-phase1.tar.gz.sha256

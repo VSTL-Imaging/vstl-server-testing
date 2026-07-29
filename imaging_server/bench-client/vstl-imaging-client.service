@@ -1,0 +1,36 @@
+# =============================================================================
+# /etc/systemd/system/vstl-imaging-client.service
+# =============================================================================
+# Auto-runs the VSTL bench client at boot on the Live ISO.
+# Triggered AFTER the network is ready so /api calls work.
+# =============================================================================
+[Unit]
+Description=VSTL Imaging Client (bench-side bridge to VSTL 360 backend)
+Documentation=file:///opt/vstl/README.md
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/vstl/vstl-imaging-client.sh
+ConditionPathExists=/opt/vstl/config.env
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/opt/vstl/config.env
+
+# Wait up to 60s for DNS to resolve the VSTL backend host before giving up
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do getent hosts tech-audit-system.emergent.host >/dev/null 2>&1 && exit 0; sleep 1; done; echo "DNS resolution timeout" >&2; exit 1'
+
+ExecStart=/opt/vstl/vstl-imaging-client.sh
+
+# Log to journal AND /var/log/vstl-imaging-client.log (script handles the file)
+StandardOutput=journal+console
+StandardError=journal+console
+
+# A bench session typically takes 5-15 min; allow an hour before timeout
+TimeoutStartSec=3600
+
+# Don't restart on failure — a failed session needs human attention.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

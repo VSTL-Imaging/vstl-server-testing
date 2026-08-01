@@ -1,8 +1,184 @@
 # VSTL Server Codex Laptop Sync Handoff
 
-Last updated: 2026-07-29
+Last updated: 2026-08-01
 
 Use this file when opening the project from another laptop or another Codex app. GitHub is the shared source of truth so both laptops see the same project instructions, server logic notes, and update history.
+
+## Emergent AI Full Setup Report - Read First
+
+This file is the current high-level handoff for Emergent AI, Codex, or any other AI coding tool working on the VSTL imaging setup. It explains the full operating model, server roles, networking/PXE behavior, VSTL Bench workflow, cloud-app contracts, reporting expectations, and the rules for testing versus main deployment.
+
+### Current Operating Model
+
+VSTL has two imaging server environments:
+
+- Main/original server: `10.255.0.75`
+- Testing server: `10.255.0.45`
+
+The main server is the live production system. Do not change it during investigation or experimentation. The testing server is where updates must be installed first, tested, and approved. Only after the user explicitly says `deploy main` should the approved change be applied to `10.255.0.75`.
+
+### Server Responsibilities
+
+The VSTL server setup supports these end-to-end processes:
+
+- IPv4 PXE boot into the VSTL Bench screen.
+- Restore OS images to laptops.
+- Run L1/L2 QC tests.
+- Run secure erase / sanitize workflows and issue local/server certificates.
+- Capture full system images after a valid certified secure erase.
+- Save local server reports.
+- Submit audit/report data to the VSTL 360 cloud app.
+- Export report sections for Restore, QC, Secure Erase, and Capture.
+
+### VSTL 360 / Cloud App Relationship
+
+VSTL 360 is the cloud system of record for user identity, role/permission logic, imaging audit ingest, box allocation, and cloud reports. The bench client must treat cloud-provided fields as authoritative rather than recreating the rules locally.
+
+Important cloud-facing behavior:
+
+- Bench login uses VSTL 360 imaging auth endpoints.
+- Bench ingest sends the existing `X-API-Key` plus the operator bearer token when available.
+- `can_capture` from the auth response controls whether `Capture Full System Image` is visible.
+- The client must not decide Capture visibility using `is_admin` alone.
+- The backend-owned Capture rule is: `can_capture = is_admin OR ("Imaging" in roles)`.
+- Imaging-only users may have `layer: null`; the bench must not block Secure Erase or Capture only because layer is missing.
+- L1 and L2 users are allowed to select either L1 or L2 workflow; only Capture remains permission-gated.
+
+### Box Picker Contract
+
+The bench box picker must use:
+
+```http
+GET /api/imaging/my-boxes
+Authorization: Bearer <imaging session token>
+```
+
+Required behavior:
+
+- Populate the box picker only from `boxes[]` in `/api/imaging/my-boxes`.
+- Do not show all boxes as a fallback.
+- If `boxes: []`, show: `No boxes assigned to you. Ask your supervisor to allocate a box.`
+- Re-fetch `/my-boxes` after every successful `/api/imaging/ingest`.
+- Render the model using `model_label`, not by concatenating `brand + model`.
+- Keep sending the selected `lot_no` and `box_no` on ingest.
+
+### Report Requirements
+
+All report sections must be sorted newest-to-oldest. This applies to:
+
+- Restore
+- QC
+- Secure Erase
+- Capture
+
+Reports should include, wherever the payload provides it:
+
+- Operation, status, date, time, UAE timestamp
+- Technician level
+- Logged-in `User`
+- Bench ID
+- Serial number
+- SKU / product number
+- MAC ID
+- Model name
+- CPU/GPU
+- RAM module information
+- Storage device information
+- Battery designed capacity, full charged capacity, current capacity, and health
+- BIOS and OS fields
+- Restore / QC / Secure Erase / Capture elapsed time
+- Secure erase certificate ID and method
+- QC results, including fingerprint/audio/battery/stress/fan data
+- Cosmetic Grade
+- Parts Required
+- Additional Remarks
+
+Battery health should follow the BatteryInfoView-style calculation using designed capacity and full charged capacity. Whole percentage display is required: examples `79.3% -> 79%`, `79.9% -> 79%`.
+
+Report timestamps should be in UAE time, `Asia/Dubai`, unless a specific UTC audit/debug field is intentionally shown.
+
+### Secure Erase Policy
+
+The user does not want weak clear methods used as secure erase fallback. Specifically, do not use these methods, even as fallback:
+
+- `NVMe_SOFTWARE_ZERO_CLEAR`
+- `NVMe_FORMAT_USER_DATA`
+
+Preferred trustable purge-class methods are controller/firmware-supported sanitize or secure erase methods, for example:
+
+- `NVMe_SANITIZE_BLOCK_ERASE`
+- `NVMe_SANITIZE_CRYPTO_ERASE`
+- `NVMe_FORMAT_CRYPTO`
+- ATA Security Erase / Enhanced Security Erase where supported by the drive
+
+If a laptop/SSD controller rejects all trusted purge methods, the bench should fail clearly and explain that the controller rejected the advertised native purge command. It should not silently downgrade to a weak clear method and mark it as trusted purge.
+
+Capture readiness requires a certified secure erase record matching the laptop serial and storage device. If capture fails with “No certified secure-erase record exists for this laptop serial and storage device,” inspect the local/server secure erase history matching logic rather than bypassing the check.
+
+### PXE / Networking Notes
+
+Main network observed:
+
+- Main server: `10.255.0.75`
+- Testing server LAN: `10.255.0.45`
+- Testing server Tailscale observed: `100.76.131.61`
+- Omada controller observed on testing server: `https://100.76.131.61:8043`
+
+Testing bench network:
+
+- Bench/PXE test subnet has been used as `10.45.0.0/24`.
+- Testing server PXE address has been used as `10.45.0.45` on the VSTL bridge/interface when active.
+- Avoid running duplicate DHCP/PXE services on the same physical network as the main server unless the network is intentionally isolated.
+
+Known Type-C Ethernet / PXE issue pattern:
+
+- Built-in Ethernet usually boots into VSTL Bench correctly.
+- Some Type-C Ethernet adapters boot iPXE but hang after initrd load or fail to find the live filesystem.
+- The fix should be global, not per-laptop model: stable NIC handoff from iPXE to Linux, enough DHCP wait/retry time, correct boot interface selection, and driver/module support for common USB/Type-C NIC chipsets.
+
+Switch/fiber guidance:
+
+- Avoid physical switch loops unless STP/LACP is intentionally configured and verified.
+- Prefer direct uplinks from the server room/core switch to each rack switch.
+- HPE 10Gb SR SFP+ modules are multimode optics and should use multimode fiber, usually aqua OM3/OM4.
+- Yellow single-mode fiber normally requires LR/single-mode optics on both ends.
+- Single-mode and multimode do not change the negotiated speed by themselves. If both sides are 10G optics and the fiber/module type matches, the link is 10G. The difference is distance, fiber type, wavelength, and compatibility.
+
+### Omada / Switch Management
+
+Omada is installed on the testing server for TP-Link/Omada switch/AP management. Open it from a browser using the testing server address and Omada HTTPS port, for example:
+
+```text
+https://100.76.131.61:8043
+```
+
+Use Omada for supported TP-Link/Omada devices. Cisco/Aruba switch console or firmware work may require vendor-specific console/CLI access and is not the same as Omada management.
+
+### GitHub Sync Rules For AI Tools
+
+Before any AI tool starts editing:
+
+1. Read this handoff file completely.
+2. Pull the latest GitHub state for the correct branch.
+3. Inspect `git status --short --branch`.
+4. Do not overwrite or reset user/server changes without approval.
+5. Make the change.
+6. Test or verify what is practical.
+7. Commit and push the correct repo/branch.
+8. Report the commit hash and exactly what was changed.
+
+Never commit:
+
+- Passwords
+- Tokens
+- API keys
+- `.env` files
+- ISO files
+- Raw disk images
+- Large backups
+- KVM screenshots/videos or temporary media unless the user explicitly asks for them
+
+Credentials must be shared out-of-band by the owner. This handoff intentionally does not store live passwords.
 
 ## 1. GitHub Account And Repositories
 

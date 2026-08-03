@@ -17,7 +17,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 HEADERS = [
-    "Operation", "Overall Status", "Operation Elapsed Time (sec)",
+    "Operation", "Overall Status", "Audit Submission Status",
+    "Operation Elapsed Time (sec)",
     "QC Elapsed Time (sec)", "Restore Elapsed Time (sec)",
     "Secure Erase Elapsed Time (sec)", "Capture Elapsed Time (sec)",
     "Secure Erase Reg ID",
@@ -52,7 +53,8 @@ HEADERS = [
 ]
 
 CENTER_VALUE_HEADERS = {
-    "Operation", "Overall Status", "Operation Elapsed Time (sec)",
+    "Operation", "Overall Status", "Audit Submission Status",
+    "Operation Elapsed Time (sec)",
     "QC Elapsed Time (sec)", "Restore Elapsed Time (sec)",
     "Secure Erase Elapsed Time (sec)", "Capture Elapsed Time (sec)",
     "Secure Erase Reg ID",
@@ -414,6 +416,40 @@ def _operation_elapsed_from_row(row: dict[str, str], sheet_name: str) -> str:
     return _text(row.get(mapping.get(sheet_name, "")))
 
 
+def _normalize_audit_submission_status(value) -> str:
+    status = _text(value)
+    folded = status.lower()
+    if not folded:
+        return ""
+    if any(token in folded for token in ("failed", "failure", "error", "expired", "queued", "retry", "false")):
+        return "Submission Failed"
+    if any(token in folded for token in ("submitted", "success", "saved", "stored", "ok", "true")):
+        return "Audit Submitted"
+    return status
+
+
+def _audit_submission_status(payload: dict) -> str:
+    cloud_audit = payload.get("cloud_audit") if isinstance(payload.get("cloud_audit"), dict) else {}
+    audit_submission = (
+        payload.get("audit_submission")
+        if isinstance(payload.get("audit_submission"), dict)
+        else {}
+    )
+    status = _first_text(
+        payload.get("audit_submission_status"),
+        payload.get("cloud_audit_status"),
+        payload.get("cloud_submission_status"),
+        audit_submission.get("status"),
+        cloud_audit.get("status"),
+    )
+    if status:
+        return _normalize_audit_submission_status(status)
+    for ok in (audit_submission.get("ok"), cloud_audit.get("ok")):
+        if isinstance(ok, bool):
+            return "Audit Submitted" if ok else "Submission Failed"
+    return ""
+
+
 def flatten(record: dict) -> dict[str, str]:
     payload = record.get("payload") if isinstance(record.get("payload"), dict) else record
     raw = payload.get("raw_data") or {}
@@ -497,6 +533,7 @@ def flatten(record: dict) -> dict[str, str]:
     return {
         "Operation": "; ".join(operations),
         "Overall Status": overall,
+        "Audit Submission Status": _audit_submission_status(payload),
         "Operation Elapsed Time (sec)": "",
         "QC Elapsed Time (sec)": qc_elapsed,
         "Restore Elapsed Time (sec)": restore_elapsed,

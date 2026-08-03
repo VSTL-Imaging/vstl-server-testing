@@ -32,6 +32,7 @@ def _sample_payload():
         "technician_level": "L1",
         "technician_user_name": "Rahul Operator",
         "bench_id": "BENCH-01",
+        "audit_submission_status": "Audit Submitted",
         "serial_no": "SER123",
         "sku": "SKU456",
         "mac_id": "AA:BB:CC:DD:EE:FF",
@@ -156,6 +157,7 @@ def test_flatten_contains_requested_hardware_and_qc_fields():
     row = exporter.flatten({"received_at": "2026-06-14T10:11:12Z", "payload": _sample_payload()})
     assert row["Operation"] == "QC; Capture"
     assert row["User"] == "Rahul Operator"
+    assert row["Audit Submission Status"] == "Audit Submitted"
     assert row["Installed OS"] == "Windows 11 Pro"
     assert row["Secure Erase Reg ID"] == "SE-REG-001"
     assert row["Display Resolution (Short)"] == "FHD"
@@ -190,6 +192,29 @@ def test_flatten_contains_requested_hardware_and_qc_fields():
     assert row["Driver Preflight Status"] == "PASS"
     assert "fingerprint_linux=yes" in row["Driver Preflight Evidence"]
     assert row["Driver Preflight Remarks"] == "Linux drivers ready"
+
+
+def test_flatten_normalizes_audit_submission_status():
+    payload = _sample_payload()
+    payload["audit_submission_status"] = "operator session expired; audit queued safely - login again to send"
+
+    row = exporter.flatten({"payload": payload})
+
+    assert row["Audit Submission Status"] == "Submission Failed"
+
+    payload = _sample_payload()
+    payload.pop("audit_submission_status", None)
+    payload["cloud_audit"] = {"ok": False}
+
+    row = exporter.flatten({"payload": payload})
+
+    assert row["Audit Submission Status"] == "Submission Failed"
+
+    payload["cloud_audit"] = {"ok": True}
+
+    row = exporter.flatten({"payload": payload})
+
+    assert row["Audit Submission Status"] == "Audit Submitted"
 
 
 def test_flatten_corrects_lenovo_dmi_model_and_sku_swap():
@@ -407,6 +432,8 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert "Storage Product Number" not in exporter.HEADERS
     assert "Number of Entries" in exporter.HEADERS
     assert "User" in exporter.HEADERS
+    assert "Audit Submission Status" in exporter.HEADERS
+    assert "Audit Submission Status" in exporter.CENTER_VALUE_HEADERS
     assert "System Board CT Number" in exporter.HEADERS
     assert "Battery Cycle Count" in exporter.HEADERS
     assert "RAM Type" in exporter.HEADERS
@@ -463,6 +490,10 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert "Operation Elapsed Time (sec)" in exporter._sheet_headers("QC")
     assert "Operation Elapsed Time (sec)" in exporter._sheet_headers("Secure Erase")
     assert "Operation Elapsed Time (sec)" in exporter._sheet_headers("Capture")
+    assert "Audit Submission Status" in exporter._sheet_headers("Restore")
+    assert "Audit Submission Status" in exporter._sheet_headers("QC")
+    assert "Audit Submission Status" in exporter._sheet_headers("Secure Erase")
+    assert "Audit Submission Status" in exporter._sheet_headers("Capture")
 
 
 def test_part_numbers_never_fall_back_to_ct_model_or_serial():

@@ -1,6 +1,6 @@
 # VSTL 360 Imaging - Original Server Handoff For Emergent AI
 
-Last updated: 2026-08-01
+Last updated: 2026-08-03
 
 This document is the original/main-server-only handoff for Emergent AI or another AI coding tool. It describes the production imaging server setup only. It intentionally does not document the testing server setup.
 
@@ -114,6 +114,7 @@ Reports should include these fields when available:
 
 - Operation
 - Overall status
+- Audit Submission Status (`Audit Submitted` / `Submission Failed`)
 - Date and time in UAE time
 - Technician level
 - User

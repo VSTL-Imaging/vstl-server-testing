@@ -135,6 +135,28 @@ def test_completed_units_use_operator_owned_durable_retry_queue():
     assert "submission_id" in STATE_API
 
 
+def test_bench_attaches_audit_submission_status_before_local_report_post():
+    assert "def _attach_audit_submission_status(" in TUI
+    assert 'payload["audit_submission_status"] = status' in TUI
+    assert '"Audit Submitted" if ok else "Submission Failed"' in TUI
+    submit_pos = TUI.index("ok, msg = post_ingest(payload, cfg, operator)")
+    attach_pos = TUI.index("_attach_audit_submission_status(payload, ok, msg)", submit_pos)
+    local_pos = TUI.index("local_ok, local_msg = post_local_report(payload, cfg)", attach_pos)
+    completion_pos = TUI.index("screen_completion(stdscr, ident, ok, msg, tech, choice", local_pos)
+    assert submit_pos < attach_pos < local_pos < completion_pos
+
+
+def test_successful_cloud_audit_releases_dhcp_after_operator_restart_prompt():
+    assert "def release_successful_audit_dhcp_lease(" in TUI
+    assert "not releasing DHCP lease; audit was not submitted" in TUI
+    assert 'commands.append(["dhclient", "-r", iface])' in TUI
+    assert '"VSTL_RELEASE_DHCP_ON_AUDIT_SUBMITTED"' in TUI
+    completion_pos = TUI.index("screen_completion(stdscr, ident, ok, msg, tech, choice")
+    release_pos = TUI.index("release_successful_audit_dhcp_lease(cfg, ok)", completion_pos)
+    return_pos = TUI.index("return 0", release_pos)
+    assert completion_pos < release_pos < return_pos
+
+
 def test_local_report_uses_api_key_fallback_and_is_non_blocking_when_cloud_saved():
     assert 'token = cfg.get("VSTL_REPORT_TOKEN") or cfg.get("VSTL_API_KEY", "")' in TUI
     assert "local report token unavailable; cloud audit still uses VSTL_API_KEY" in TUI

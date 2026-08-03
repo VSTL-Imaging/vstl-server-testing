@@ -1292,11 +1292,14 @@ cat > "$AUTOEXEC_IPXE" <<AUTO
 # PXE server on the LAN; if the marker line doesn't match THIS FOG IP
 # it's a rogue responder. See tools/find_rogue_pxe.sh.)
 ifopen net0 || echo net0 already open
-echo Reusing firmware PXE network lease; no second DHCP.
+echo Reusing firmware PXE network lease when available.
+isset \${net0/ip} || dhcp net0 || echo net0 DHCP retry failed; continuing with existing firmware state
+ifstat
 chain --autofree http://${SERVER_IP}/vstl-pxe/boot.ipxe || goto retry
 :retry
 echo VSTL HTTP chain failed; retrying in 3 seconds...
 sleep 3
+isset \${net0/ip} || dhcp net0 || echo net0 DHCP retry failed again
 chain --autofree http://${SERVER_IP}/vstl-pxe/boot.ipxe || goto retry
 AUTO
 chmod 644 "$AUTOEXEC_IPXE"
@@ -1494,11 +1497,14 @@ echo VSTL PXE HTTP chain to FOG ${SERVER_IP}
 # its second DHCP pass and stop at "Please enter tftp server". Use the reserved
 # PXE lease directly; DHCP remains as a fallback only if static assignment fails.
 ifopen net0 || echo net0 already open
-echo Reusing firmware PXE network lease; no second DHCP.
+echo Reusing firmware PXE network lease when available.
+isset \${net0/ip} || dhcp net0 || echo net0 DHCP retry failed; continuing with existing firmware state
+ifstat
 chain --autofree http://${SERVER_IP}/vstl-pxe/boot.ipxe || goto retry
 :retry
 echo VSTL HTTP chain failed; retrying in 3 seconds...
 sleep 3
+isset \${net0/ip} || dhcp net0 || echo net0 DHCP retry failed again
 chain --autofree http://${SERVER_IP}/vstl-pxe/boot.ipxe || goto retry
 AUTO
     chmod 644 "$AUTOEXEC_IPXE"

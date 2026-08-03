@@ -22,6 +22,9 @@ from urllib.parse import urlparse
 
 DEFAULT_SERVER_IP = "10.255.0.75"
 SYS_CLASS_NET = Path("/sys/class/net")
+DHCP_RELEASE_IFACE_FILE = Path(
+    os.environ.get("VSTL_DHCP_RELEASE_IFACE_FILE", "/run/vstl-dhcp-release-iface")
+)
 STATUS_HOLD_SECONDS = 3.0
 WIRED_DEVICE_WAIT_SECONDS = 60
 WIRED_LINK_WAIT_SECONDS = 20
@@ -102,6 +105,37 @@ def server_reachable(host: str, timeout: float = 2.0) -> bool:
 def interface_has_ipv4(interface: str) -> bool:
     result = run(["ip", "-4", "-o", "addr", "show", "dev", interface], timeout=4)
     return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def env_enabled(name: str, default: bool = True) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def record_dhcp_release_interface(interface: str) -> None:
+    try:
+        DHCP_RELEASE_IFACE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        DHCP_RELEASE_IFACE_FILE.write_text(f"{interface}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def claim_existing_dhcp_lease(interface: str) -> None:
+    """Create dhclient lease state when live-boot already configured IPv4."""
+    if not env_enabled("VSTL_DHCP_CLAIM_EXISTING_LEASE", True):
+        return
+    if run(["sh", "-c", "command -v dhclient"], timeout=3).returncode != 0:
+        return
+    try:
+        timeout = int(os.environ.get("VSTL_DHCP_CLAIM_TIMEOUT", "10") or "10")
+    except ValueError:
+        timeout = 10
+    result = run(["dhclient", "-4", "-1", "-v", interface], timeout=max(5, timeout))
+    if result.returncode != 0:
+        detail = result.stdout.strip().replace("\n", " ")[:120]
+        print(f"DHCP lease claim on {interface} skipped: {detail}")
 
 
 def _read_text(path: Path) -> str:
@@ -301,21 +335,26 @@ def request_dhcp(interface: str) -> bool:
         run(["ip", "link", "set", interface, "up"], timeout=5)
         wait_for_link(interface)
         if interface_has_ipv4(interface):
+            record_dhcp_release_interface(interface)
+            claim_existing_dhcp_lease(interface)
             return True
 
         if run(["sh", "-c", "command -v dhclient"], timeout=3).returncode == 0:
             result = run(["dhclient", "-4", "-1", "-v", interface], timeout=35)
             if result.returncode == 0 and interface_has_ipv4(interface):
+                record_dhcp_release_interface(interface)
                 return True
 
         if run(["sh", "-c", "command -v dhcpcd"], timeout=3).returncode == 0:
             result = run(["dhcpcd", "-4", "-1", interface], timeout=35)
             if result.returncode == 0 and interface_has_ipv4(interface):
+                record_dhcp_release_interface(interface)
                 return True
 
         if run(["sh", "-c", "command -v udhcpc"], timeout=3).returncode == 0:
             result = run(["udhcpc", "-q", "-t", "5", "-T", "5", "-i", interface], timeout=35)
             if result.returncode == 0 and interface_has_ipv4(interface):
+                record_dhcp_release_interface(interface)
                 return True
 
         if attempt < WIRED_DHCP_ATTEMPTS:

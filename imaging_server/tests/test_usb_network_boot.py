@@ -177,6 +177,16 @@ def test_wired_start_primes_common_typec_ethernet_driver_stack():
     assert "PXE boot adapter MAC" in source
 
 
+def test_network_helper_marks_and_claims_dhcp_lease_for_completion_release():
+    source = NETWORK_PATH.read_text(encoding="utf-8")
+    assert "DHCP_RELEASE_IFACE_FILE" in source
+    assert "def record_dhcp_release_interface(" in source
+    assert "def claim_existing_dhcp_lease(" in source
+    assert "record_dhcp_release_interface(interface)" in source
+    assert "claim_existing_dhcp_lease(interface)" in source
+    assert '"VSTL_DHCP_CLAIM_EXISTING_LEASE"' in source
+
+
 def test_usb_builder_injects_large_console_fonts():
     assert "usr/share/consolefonts" in USB_BUILD
     assert "TerminusBold32x16" in USB_BUILD

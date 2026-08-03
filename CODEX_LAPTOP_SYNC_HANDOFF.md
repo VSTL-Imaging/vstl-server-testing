@@ -1,6 +1,6 @@
 # VSTL Server Codex Laptop Sync Handoff
 
-Last updated: 2026-08-01
+Last updated: 2026-08-03
 
 Use this file when opening the project from another laptop or another Codex app. GitHub is the shared source of truth so both laptops see the same project instructions, server logic notes, and update history.
 
@@ -73,7 +73,7 @@ All report sections must be sorted newest-to-oldest. This applies to:
 
 Reports should include, wherever the payload provides it:
 
-- Operation, status, date, time, UAE timestamp
+- Operation, status, audit submission status, date, time, UAE timestamp
 - Technician level
 - Logged-in `User`
 - Bench ID

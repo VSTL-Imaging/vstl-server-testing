@@ -371,6 +371,14 @@ PENDING_INGEST_DIR = os.environ.get(
     "VSTL_PENDING_INGEST_DIR",
     "/var/lib/vstl/pending-ingest",
 )
+DHCP_RELEASE_IFACE_FILE = os.environ.get(
+    "VSTL_DHCP_RELEASE_IFACE_FILE",
+    "/run/vstl-dhcp-release-iface",
+)
+DHCP_RELEASE_LOG_FILE = os.environ.get(
+    "VSTL_DHCP_RELEASE_LOG_FILE",
+    "/var/log/vstl-dhcp-release.log",
+)
 
 
 def load_config() -> dict:
@@ -391,7 +399,9 @@ def load_config() -> dict:
     for k in ("VSTL_API_BASE", "VSTL_API_KEY", "VSTL_REPORT_BASE",
               "VSTL_REPORT_TOKEN", "SERVER_IP", "VSTL_SERVER_IP", "BENCH_ID",
               "VSTL_AUTO_SHUTDOWN", "VSTL_BURN_DURATION_SEC",
-              "VSTL_BURN_THROTTLE_C"):
+              "VSTL_BURN_THROTTLE_C", "VSTL_RELEASE_DHCP_ON_AUDIT_SUBMITTED",
+              "VSTL_DHCP_RELEASE_IFACE", "VSTL_DHCP_RELEASE_IFACE_FILE",
+              "VSTL_DHCP_RELEASE_LOG_FILE"):
         if os.environ.get(k):
             cfg[k] = os.environ[k]
     return cfg
@@ -6579,9 +6589,161 @@ def post_ingest(payload: dict, cfg: dict, operator: dict | None = None) -> tuple
     return False, f"audit queued safely for retry; {message}"
 
 
+def _attach_audit_submission_status(payload: dict, ok: bool, message: str) -> None:
+    """Persist the final cloud submission outcome for local/server reports."""
+    recorded_at = datetime.now(timezone.utc).isoformat()
+    status = "Audit Submitted" if ok else "Submission Failed"
+    payload["audit_submission_status"] = status
+    payload["audit_submission_ok"] = bool(ok)
+    payload["audit_submission_message"] = str(message or "")
+    payload["audit_submission_recorded_at"] = recorded_at
+    payload["cloud_audit"] = {
+        "ok": bool(ok),
+        "status": status,
+        "message": str(message or ""),
+        "recorded_at": recorded_at,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Phase 3 — Generic API helpers + Erase / Capture / Restore screens
 # ---------------------------------------------------------------------------
+def _cfg_enabled(cfg: dict, name: str, default: bool = True) -> bool:
+    raw = str(cfg.get(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off", "disabled"}
+
+
+def _read_first_line(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.readline().strip()
+    except OSError:
+        return ""
+
+
+def _default_network_interface() -> str:
+    try:
+        result = subprocess.run(
+            ["ip", "-o", "route", "show", "default"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+            check=False,
+        )
+        if result.returncode == 0:
+            parts = result.stdout.split()
+            if "dev" in parts:
+                iface = parts[parts.index("dev") + 1].strip()
+                if iface:
+                    return iface
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    try:
+        result = subprocess.run(
+            ["ip", "-4", "-o", "addr", "show", "scope", "global"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    blocked_prefixes = ("lo", "br-", "docker", "tailscale", "veth", "virbr")
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 2:
+            continue
+        iface = fields[1].split("@", 1)[0]
+        if iface and not iface.startswith(blocked_prefixes):
+            return iface
+    return ""
+
+
+def _log_dhcp_release(message: str, cfg: dict | None = None) -> None:
+    path = (cfg or {}).get("VSTL_DHCP_RELEASE_LOG_FILE") or DHCP_RELEASE_LOG_FILE
+    line = f"{datetime.now(timezone.utc).isoformat()} {message}\n"
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError:
+        if path == "/tmp/vstl-dhcp-release.log":
+            return
+        try:
+            with open("/tmp/vstl-dhcp-release.log", "a", encoding="utf-8") as f:
+                f.write(line)
+        except OSError:
+            pass
+
+
+def _run_release_command(command: list[str]) -> tuple[int, str]:
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=8,
+            check=False,
+        )
+        return result.returncode, result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 127, str(exc)
+
+
+def release_successful_audit_dhcp_lease(cfg: dict, ingest_ok: bool) -> tuple[bool, str]:
+    """Release runtime DHCP only after the cloud accepted this unit audit."""
+    if not ingest_ok:
+        message = "not releasing DHCP lease; audit was not submitted"
+        _log_dhcp_release(message, cfg)
+        return False, message
+    if not _cfg_enabled(cfg, "VSTL_RELEASE_DHCP_ON_AUDIT_SUBMITTED", True):
+        return False, "DHCP release disabled"
+
+    iface = str(cfg.get("VSTL_DHCP_RELEASE_IFACE", "")).strip()
+    if not iface:
+        iface_file = cfg.get("VSTL_DHCP_RELEASE_IFACE_FILE") or DHCP_RELEASE_IFACE_FILE
+        iface = _read_first_line(iface_file)
+    if not iface:
+        iface = _default_network_interface()
+    if not iface:
+        message = "could not determine DHCP interface to release"
+        _log_dhcp_release(message, cfg)
+        return False, message
+
+    commands: list[list[str]] = []
+    if shutil.which("dhclient"):
+        commands.append(["dhclient", "-r", iface])
+    if shutil.which("dhcpcd"):
+        commands.append(["dhcpcd", "-k", iface])
+    if shutil.which("ip"):
+        commands.append(["ip", "addr", "flush", "dev", iface])
+    if not commands:
+        message = f"no DHCP release tools available for {iface}"
+        _log_dhcp_release(message, cfg)
+        return False, message
+
+    last_message = ""
+    for command in commands:
+        rc, output = _run_release_command(command)
+        joined = " ".join(command)
+        if rc == 0:
+            message = f"released DHCP lease on {iface} using {joined}"
+            _log_dhcp_release(message, cfg)
+            return True, message
+        last_message = f"{joined} rc={rc} {output}".strip()
+
+    message = f"DHCP lease release failed on {iface}: {last_message}"
+    _log_dhcp_release(message, cfg)
+    return False, message
+
+
 def post_local_report(payload: dict, cfg: dict) -> tuple[bool, str]:
     """Mirror the completed audit to the on-prem reporting service."""
     base = cfg.get("VSTL_REPORT_BASE", "").rstrip("/")
@@ -8848,13 +9010,20 @@ def run(stdscr) -> int:
         pass
 
     screen_submitting(stdscr)
-    local_ok, local_msg = post_local_report(payload, cfg)
     ok, msg = post_ingest(payload, cfg, operator)
+    _attach_audit_submission_status(payload, ok, msg)
+    try:
+        with open(LOCAL_AUDIT_FILE, "w") as f:
+            json.dump(payload, f, indent=2)
+    except OSError:
+        pass
+    local_ok, local_msg = post_local_report(payload, cfg)
     screen_completion(stdscr, ident, ok, msg, tech, choice,
                       lock_audit=audit, qc_summary=qc_summary,
                       burn_result=burn_result,
                       local_report_ok=local_ok,
                       local_report_msg=local_msg)
+    release_successful_audit_dhcp_lease(cfg, ok)
 
     return 0
 

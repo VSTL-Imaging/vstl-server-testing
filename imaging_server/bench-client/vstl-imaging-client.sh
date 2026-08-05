@@ -127,8 +127,33 @@ MODEL=$(norm "$(dmidecode -s system-product-name || true)")
     SERIAL_NO=$(norm "$(dmidecode -s baseboard-serial-number || true)")
 
 # Pick the laptop identity MAC, never a removable USB/Type-C adapter MAC.
-# Prefer built-in LOM, then BIOS passthrough MAC. Returning UNKNOWN is safer
-# than linking many laptops to the same shared Type-C Ethernet adapter.
+# Prefer BIOS LOM, then BIOS passthrough MAC, then an internal LOM interface.
+# Returning UNKNOWN is safer than linking many laptops to the same shared
+# Type-C Ethernet adapter.
+normalize_mac() {
+    local mac
+    mac=$(printf '%s' "${1:-}" \
+        | tr '[:lower:]-' '[:upper:]:' \
+        | grep -oE '([0-9A-F]{2}:){5}[0-9A-F]{2}' \
+        | head -1 || true)
+    [[ "$mac" == "00:00:00:00:00:00" ]] && mac=""
+    printf '%s' "$mac"
+}
+
+is_known_external_adapter_mac() {
+    local mac prefix
+    mac=$(normalize_mac "${1:-}")
+    prefix=$(printf '%s' "$mac" | cut -d: -f1-3)
+    case "$prefix" in
+        # Realtek USB/Type-C Ethernet adapters seen on the bench. The adapter
+        # can carry PXE traffic, but its MAC is not the laptop identity.
+        00:E0:4C)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 is_typec_or_usb_nic() {
     local iface="$1"
     local device_path driver
@@ -151,8 +176,8 @@ read_lom_iface_mac() {
         [[ -d "/sys/class/net/$iface/wireless" ]] && continue
         is_typec_or_usb_nic "$iface" && continue
         [[ -r "/sys/class/net/$iface/address" ]] || continue
-        mac=$(tr '[:lower:]' '[:upper:]' < "/sys/class/net/$iface/address")
-        [[ "$mac" =~ ^([0-9A-F]{2}:){5}[0-9A-F]{2}$ && "$mac" != "00:00:00:00:00:00" ]] && {
+        mac=$(normalize_mac "$(cat "/sys/class/net/$iface/address")")
+        [[ -n "$mac" ]] && ! is_known_external_adapter_mac "$mac" && {
             echo "$mac"
             return 0
         }
@@ -163,12 +188,13 @@ read_lom_iface_mac() {
 read_dmi_mac_by_label() {
     local pattern="$1"
     dmidecode -t 1 -t 2 -t 11 2>/dev/null \
-        | awk -v pat="$pattern" '{line=tolower($0)} line ~ pat && match($0, /([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/) {print toupper(substr($0, RSTART, RLENGTH)); exit}'
+        | awk -v pat="$pattern" '{line=tolower($0)} line ~ pat && match($0, /([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/) {print toupper(substr($0, RSTART, RLENGTH)); exit}' \
+        | sed 's/-/:/g'
 }
 
-MAC_ID=$(read_lom_iface_mac || true)
-[[ -z "$MAC_ID" ]] && MAC_ID=$(read_dmi_mac_by_label 'lom|lan|onboard|on-board|integrated|internal|ethernet' || true)
+MAC_ID=$(read_dmi_mac_by_label 'lom|lan|onboard|on-board|integrated|internal|ethernet' || true)
 [[ -z "$MAC_ID" ]] && MAC_ID=$(read_dmi_mac_by_label 'pass[ _-]*through|passthrough' || true)
+[[ -z "$MAC_ID" ]] && MAC_ID=$(read_lom_iface_mac || true)
 MAC_ID=$(norm "${MAC_ID:-UNKNOWN}")
 
 # CPU

@@ -53,6 +53,23 @@ def test_detect_mac_uses_bios_passthrough_when_no_lom_is_available(tmp_path):
         assert hw.detect_mac(str(sys_net)) == "AA:BB:CC:DD:EE:F1"
 
 
+def test_detect_mac_prefers_bios_passthrough_over_typec_boot_adapter(tmp_path):
+    sys_net = tmp_path / "net"
+    _iface(sys_net, "eth0", "00:E0:4C:5D:33:A0")
+    dmi = "OEM String: Pass Through MAC Address: B4-45-06-4D-DA-A8"
+
+    with mock.patch.object(hw, "_dmidecode_text", return_value=dmi):
+        assert hw.detect_mac(str(sys_net)) == "B4:45:06:4D:DA:A8"
+
+
+def test_detect_mac_blocks_known_typec_adapter_mac_even_without_usb_path(tmp_path):
+    sys_net = tmp_path / "net"
+    _iface(sys_net, "eth0", "00:E0:4C:5D:33:A0")
+
+    with mock.patch.object(hw, "_dmidecode_text", return_value=""):
+        assert hw.detect_mac(str(sys_net)) == hw.UNKNOWN
+
+
 def test_detect_mac_prefers_bios_lom_before_passthrough(tmp_path):
     sys_net = tmp_path / "net"
     dmi = "\n".join([

@@ -1214,6 +1214,12 @@ def detect_windows_oem_key() -> str:
 # ---------------------------------------------------------------------------
 _MAC_RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b")
 _VIRTUAL_IFACE_PREFIXES = ("docker", "veth", "virbr", "br-", "tap", "tun")
+_EXTERNAL_ADAPTER_MAC_PREFIXES = {
+    # Realtek USB/Type-C Ethernet adapters seen on the bench. A laptop with no
+    # built-in LOM can PXE through this adapter, but the adapter MAC is not the
+    # unit identity and must never be sent to VSTL 360.
+    "00:E0:4C",
+}
 _EXTERNAL_NET_DRIVER_NAMES = {
     "asix",
     "ax88179_178a",
@@ -1248,6 +1254,17 @@ def _normalize_mac(value: str) -> str:
         # Multicast/broadcast addresses are not valid unit identities.
         return ""
     return mac
+
+
+def _mac_prefix(mac: str) -> str:
+    normal = _normalize_mac(mac)
+    if not normal:
+        return ""
+    return ":".join(normal.split(":")[:3])
+
+
+def _is_known_external_adapter_mac(mac: str) -> bool:
+    return _mac_prefix(mac) in _EXTERNAL_ADAPTER_MAC_PREFIXES
 
 
 def _read_mac_file(path: str) -> str:
@@ -1325,11 +1342,17 @@ def _extract_dmi_mac_candidates(raw: str) -> tuple[list[str], list[str]]:
 
 
 def detect_mac(sys_class_net: str = "/sys/class/net") -> str:
-    """Return built-in LOM MAC, then BIOS passthrough MAC.
+    """Return BIOS LOM MAC, then BIOS passthrough MAC, then internal LOM MAC.
 
     USB/Type-C adapter MAC addresses are intentionally excluded. Returning
     UNKNOWN is safer than linking many laptops to the same removable adapter.
     """
+    dmi_lom, dmi_passthrough = _extract_dmi_mac_candidates(_dmidecode_text())
+    if dmi_lom:
+        return dmi_lom[0]
+    if dmi_passthrough:
+        return dmi_passthrough[0]
+
     base = sys_class_net
     try:
         for iface in sorted(os.listdir(base)):
@@ -1337,16 +1360,11 @@ def detect_mac(sys_class_net: str = "/sys/class/net") -> str:
                 continue
             mac_path = os.path.join(base, iface, "address")
             mac = _read_mac_file(mac_path)
-            if mac:
+            if mac and not _is_known_external_adapter_mac(mac):
                 return mac
     except OSError:
         pass
 
-    dmi_lom, dmi_passthrough = _extract_dmi_mac_candidates(_dmidecode_text())
-    if dmi_lom:
-        return dmi_lom[0]
-    if dmi_passthrough:
-        return dmi_passthrough[0]
     return UNKNOWN
 
 

@@ -816,7 +816,14 @@ def _attach_box_scope_to_payload(payload: dict, operator: dict | None) -> None:
     if not box:
         return
     payload["lot_no"] = box["lot_no"]
+    payload["lot_number"] = box["lot_no"]
     payload["box_no"] = box["box_no"]
+    payload["box_number"] = box["box_no"]
+    payload["box_model_label"] = _box_model_label(box)
+    payload["box_total"] = box.get("total", 0)
+    payload["box_imaged"] = box.get("imaged", 0)
+    payload["box_remaining"] = box.get("remaining", 0)
+    payload["box_model_count"] = box.get("model_count", 0)
     payload.setdefault("raw_data", {})["box_scope"] = dict(box)
 
 

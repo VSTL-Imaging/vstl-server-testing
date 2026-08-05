@@ -34,6 +34,8 @@ def _sample_payload():
         "bench_id": "BENCH-01",
         "audit_submission_status": "Audit Submitted",
         "serial_no": "SER123",
+        "lot_no": "LOT-2206",
+        "box_no": "BOX NO 01",
         "sku": "SKU456",
         "mac_id": "AA:BB:CC:DD:EE:FF",
         "secure_erase_reg_id": "SE-REG-001",
@@ -87,6 +89,17 @@ def _sample_payload():
         "phase3": {"capture": {"ok": True, "duration_sec": 123}},
         "lock_audit": {"detected_locks": []},
         "raw_data": {
+            "box_scope": {
+                "lot_no": "LOT-2206",
+                "box_no": "BOX NO 01",
+                "total": 20,
+                "imaged": 7,
+                "remaining": 13,
+                "brand": "HP",
+                "model": "HP EliteBook 640 14 inch G9",
+                "model_label": "HP EliteBook 640 14 inch G9",
+                "model_count": 1,
+            },
             "gpu": {
                 "integrated_gpu": "Intel Iris Xe",
                 "discrete_gpu": "NVIDIA RTX",
@@ -158,6 +171,12 @@ def test_flatten_contains_requested_hardware_and_qc_fields():
     assert row["Operation"] == "QC; Capture"
     assert row["User"] == "Rahul Operator"
     assert row["Audit Submission Status"] == "Audit Submitted"
+    assert row["Lot Number"] == "LOT-2206"
+    assert row["Box Number"] == "BOX NO 01"
+    assert row["Box Model"] == "HP EliteBook 640 14 inch G9"
+    assert row["Box Total Units"] == "20"
+    assert row["Box Imaged Units"] == "7"
+    assert row["Box Remaining Units"] == "13"
     assert row["Installed OS"] == "Windows 11 Pro"
     assert row["Secure Erase Reg ID"] == "SE-REG-001"
     assert row["Display Resolution (Short)"] == "FHD"
@@ -434,6 +453,14 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert "User" in exporter.HEADERS
     assert "Audit Submission Status" in exporter.HEADERS
     assert "Audit Submission Status" in exporter.CENTER_VALUE_HEADERS
+    assert "Lot Number" in exporter.HEADERS
+    assert "Box Number" in exporter.HEADERS
+    assert "Box Model" in exporter.HEADERS
+    assert "Box Total Units" in exporter.HEADERS
+    assert "Box Imaged Units" in exporter.HEADERS
+    assert "Box Remaining Units" in exporter.HEADERS
+    assert "Box Number" in exporter.CENTER_VALUE_HEADERS
+    assert "Box Remaining Units" in exporter.CENTER_VALUE_HEADERS
     assert "System Board CT Number" in exporter.HEADERS
     assert "Battery Cycle Count" in exporter.HEADERS
     assert "RAM Type" in exporter.HEADERS
@@ -461,6 +488,9 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert exporter.HEADERS.index("Battery Current Capacity (mWh)") == exporter.HEADERS.index("Battery Full Charged Capacity (mWh)") + 1
     assert exporter.HEADERS.index("Battery Cycle Count") == exporter.HEADERS.index("Battery Current Capacity (mWh)") + 1
     assert exporter.HEADERS.index("System Board CT Number") == exporter.HEADERS.index("BIOS Version") - 1
+    assert exporter.HEADERS.index("Lot Number") == exporter.HEADERS.index("BIOS Lock Status") + 1
+    assert exporter.HEADERS.index("Box Number") == exporter.HEADERS.index("Lot Number") + 1
+    assert exporter.HEADERS.index("Box Model") == exporter.HEADERS.index("Box Number") + 1
     assert "RAM Type" in exporter.CENTER_VALUE_HEADERS
     assert "Storage Type" in exporter.CENTER_VALUE_HEADERS
     assert "Battery Designed Capacity (mWh)" in exporter.CENTER_VALUE_HEADERS
@@ -494,6 +524,10 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert "Audit Submission Status" in exporter._sheet_headers("QC")
     assert "Audit Submission Status" in exporter._sheet_headers("Secure Erase")
     assert "Audit Submission Status" in exporter._sheet_headers("Capture")
+    assert "Lot Number" in exporter._sheet_headers("Restore")
+    assert "Box Number" in exporter._sheet_headers("QC")
+    assert "Box Model" in exporter._sheet_headers("Secure Erase")
+    assert "Box Remaining Units" in exporter._sheet_headers("Capture")
 
 
 def test_part_numbers_never_fall_back_to_ct_model_or_serial():

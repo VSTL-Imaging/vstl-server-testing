@@ -46,7 +46,9 @@ HEADERS = [
     "Fingerprint Status", "Driver Preflight Status", "Driver Preflight Evidence",
     "Driver Preflight Remarks", "Wi-Fi Status", "Bluetooth Status", "Ports Availability",
     "Ports Remarks", "Cosmetic Grade", "Parts Required", "Additional Remarks",
-    "MDM Status", "BIOS Lock Status", "Box Number",
+    "MDM Status", "BIOS Lock Status",
+    "Lot Number", "Box Number", "Box Model",
+    "Box Total Units", "Box Imaged Units", "Box Remaining Units",
     "Burn Stress Test Result", "Burn Stress Test Duration (sec)",
     "Burn Stress Max Temperature (C)", "CPU Fan Status", "CPU Fan Min RPM",
     "CPU Fan Max RPM", "CPU Fan Average RPM", "Burn Stress Test Remarks",
@@ -72,7 +74,10 @@ CENTER_VALUE_HEADERS = {
     "Installed OS", "OS Version",
     "OS License Key", "Display Resolution", "Display Resolution (Short)",
     "Display Type", "Display Test Result", "Display Remarks", "Keyboard Type",
-        "Fingerprint Status", "Driver Preflight Status", "Cosmetic Grade", "Box Number", "Burn Stress Test Result",
+    "Fingerprint Status", "Driver Preflight Status", "Cosmetic Grade",
+    "Lot Number", "Box Number", "Box Model",
+    "Box Total Units", "Box Imaged Units", "Box Remaining Units",
+    "Burn Stress Test Result",
     "Burn Stress Test Duration (sec)", "Burn Stress Max Temperature (C)",
     "CPU Fan Status", "CPU Fan Min RPM", "CPU Fan Max RPM",
     "CPU Fan Average RPM",
@@ -92,7 +97,7 @@ REMOVED_CAPTURE_SECURE_ERASE_HEADERS = {
     "Driver Preflight Status", "Driver Preflight Evidence", "Driver Preflight Remarks",
     "Wi-Fi Status", "Bluetooth Status", "Ports Availability", "Ports Remarks",
     "Cosmetic Grade", "Parts Required", "Additional Remarks",
-    "MDM Status", "BIOS Lock Status", "Box Number",
+    "MDM Status", "BIOS Lock Status",
     "Burn Stress Test Result", "Burn Stress Test Duration (sec)",
     "Burn Stress Max Temperature (C)", "CPU Fan Status", "CPU Fan Min RPM",
     "CPU Fan Max RPM", "CPU Fan Average RPM", "Burn Stress Test Remarks",
@@ -147,6 +152,61 @@ def _first_text(*values) -> str:
         if text:
             return text
     return ""
+
+
+def _box_scope_details(payload: dict, raw: dict) -> dict[str, str]:
+    raw_box = (
+        raw.get("box_scope")
+        if isinstance(raw, dict) and isinstance(raw.get("box_scope"), dict)
+        else {}
+    )
+    payload_box = payload.get("box_scope") if isinstance(payload.get("box_scope"), dict) else {}
+
+    def pick(*values) -> str:
+        return _first_text(*values)
+
+    lot_no = pick(
+        payload.get("lot_no"),
+        payload.get("lot_number"),
+        payload_box.get("lot_no"),
+        payload_box.get("lot_number"),
+        raw_box.get("lot_no"),
+        raw_box.get("lot_number"),
+    )
+    box_no = pick(
+        payload.get("box_no"),
+        payload.get("box_number"),
+        payload_box.get("box_no"),
+        payload_box.get("box_number"),
+        raw_box.get("box_no"),
+        raw_box.get("box_number"),
+    )
+    model_label = pick(
+        payload.get("box_model_label"),
+        payload.get("box_model"),
+        payload_box.get("model_label"),
+        raw_box.get("model_label"),
+    )
+    if not model_label:
+        brand = pick(payload.get("box_brand"), payload_box.get("brand"), raw_box.get("brand"))
+        model = pick(payload.get("box_model_name"), payload_box.get("model"), raw_box.get("model"))
+        if brand and model and brand.casefold() not in model.casefold():
+            model_label = f"{brand} {model}"
+        else:
+            model_label = model or brand
+
+    return {
+        "lot_no": lot_no,
+        "box_no": box_no,
+        "model_label": model_label,
+        "total": pick(payload.get("box_total"), payload_box.get("total"), raw_box.get("total")),
+        "imaged": pick(payload.get("box_imaged"), payload_box.get("imaged"), raw_box.get("imaged")),
+        "remaining": pick(
+            payload.get("box_remaining"),
+            payload_box.get("remaining"),
+            raw_box.get("remaining"),
+        ),
+    }
 
 
 _LENOVO_MTM_RE = re.compile(r"^[0-9A-Z]{4}[0-9A-Z]{3,}$", re.I)
@@ -500,6 +560,7 @@ def flatten(record: dict) -> dict[str, str]:
         overall = "FAIL" if (payload.get("qc_tests") or {}).get("failed") else "PASS"
     qc_tests = payload.get("qc_tests") if isinstance(payload.get("qc_tests"), dict) else {}
     post_qc = qc_tests.get("post_qc") if isinstance(qc_tests.get("post_qc"), dict) else {}
+    box_scope = _box_scope_details(payload, raw)
     qc_elapsed = _first_text(
         payload.get("qc_elapsed_sec"),
         payload.get("qc_duration_sec"),
@@ -683,7 +744,12 @@ def flatten(record: dict) -> dict[str, str]:
         "Additional Remarks": _text(payload.get("additional_remarks") or post_qc.get("additional_remarks")),
         "MDM Status": "LOCKED" if locks.intersection({"intune", "azure_ad", "vendor_mdm"}) else "CLEAR",
         "BIOS Lock Status": "LOCKED" if "bios_password" in locks else "CLEAR",
-        "Box Number": _text(payload.get("box_number")),
+        "Lot Number": _text(box_scope.get("lot_no")),
+        "Box Number": _text(box_scope.get("box_no")),
+        "Box Model": _text(box_scope.get("model_label")),
+        "Box Total Units": _text(box_scope.get("total")),
+        "Box Imaged Units": _text(box_scope.get("imaged")),
+        "Box Remaining Units": _text(box_scope.get("remaining")),
         "Burn Stress Test Result": _text(burn.get("result")),
         "Burn Stress Test Duration (sec)": _text(burn.get("duration_sec")),
         "Burn Stress Max Temperature (C)": _text(burn.get("max_temp_c")),

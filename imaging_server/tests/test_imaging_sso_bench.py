@@ -234,7 +234,14 @@ def test_box_scope_attaches_only_to_l1_payloads_and_refreshes_after_ingest():
         {"selected_layer": "Layer 1", "selected_box": box, "user": {}},
     )
     assert l1_payload["lot_no"] == "LOT-2206"
+    assert l1_payload["lot_number"] == "LOT-2206"
     assert l1_payload["box_no"] == "BOX NO 01"
+    assert l1_payload["box_number"] == "BOX NO 01"
+    assert l1_payload["box_model_label"] == "HP EliteBook 640 14 inch G9"
+    assert l1_payload["box_total"] == 20
+    assert l1_payload["box_imaged"] == 7
+    assert l1_payload["box_remaining"] == 13
+    assert l1_payload["box_model_count"] == 1
     assert l1_payload["raw_data"]["box_scope"]["remaining"] == 13
 
     l2_payload = {}

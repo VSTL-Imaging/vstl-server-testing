@@ -1208,25 +1208,145 @@ def detect_windows_oem_key() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Network identity (MAC of first wired NIC) — used to link to asset_master
+# Network identity (built-in LOM MAC, then passthrough MAC) — used to link to
+# asset_master. Removable USB/Type-C Ethernet adapter MACs must never become
+# the unit identity because one shared adapter can be used across many laptops.
 # ---------------------------------------------------------------------------
-def detect_mac() -> str:
-    """Return the MAC address of the first non-loopback non-virtual NIC."""
-    base = "/sys/class/net"
+_MAC_RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b")
+_VIRTUAL_IFACE_PREFIXES = ("docker", "veth", "virbr", "br-", "tap", "tun")
+_EXTERNAL_NET_DRIVER_NAMES = {
+    "asix",
+    "ax88179_178a",
+    "cdc_ether",
+    "cdc_ncm",
+    "dm9601",
+    "ipheth",
+    "kalmia",
+    "lan78xx",
+    "mos7720",
+    "mcs7830",
+    "pegasus",
+    "r8152",
+    "rtl8150",
+    "smsc75xx",
+    "smsc95xx",
+    "sr9700",
+    "usbnet",
+}
+
+
+def _normalize_mac(value: str) -> str:
+    match = _MAC_RE.search(value or "")
+    if not match:
+        return ""
+    octets = re.split(r"[:-]", match.group(0))
+    mac = ":".join(part.upper() for part in octets)
+    if mac == "00:00:00:00:00:00":
+        return ""
+    first_octet = int(mac.split(":", 1)[0], 16)
+    if first_octet & 1:
+        # Multicast/broadcast addresses are not valid unit identities.
+        return ""
+    return mac
+
+
+def _read_mac_file(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return _normalize_mac(f.read().strip())
+    except OSError:
+        return ""
+
+
+def _iface_driver_name(iface: str, base: str) -> str:
+    driver_path = os.path.join(base, iface, "device", "driver")
+    try:
+        return os.path.basename(os.path.realpath(driver_path)).lower()
+    except OSError:
+        return ""
+
+
+def _is_external_usb_or_typec_nic(iface: str, base: str) -> bool:
+    """Return True for removable USB/Type-C Ethernet interfaces.
+
+    The important rule is conservative identity: a USB/Type-C adapter may be
+    physically carrying PXE traffic, but its own MAC does not belong to the
+    laptop. If the adapter presents a BIOS passthrough MAC, we only accept that
+    value from DMI/BIOS evidence, not from this interface address.
+    """
+    name = (iface or "").lower()
+    if name.startswith(("enx", "usb")):
+        return True
+
+    device_path = os.path.join(base, iface, "device")
+    try:
+        real_device_path = os.path.realpath(device_path).lower()
+    except OSError:
+        real_device_path = ""
+    path_parts = real_device_path.replace("\\", "/").split("/")
+    if "usb" in path_parts or "thunderbolt" in path_parts:
+        return True
+
+    driver = _iface_driver_name(iface, base)
+    return driver in _EXTERNAL_NET_DRIVER_NAMES
+
+
+def _is_candidate_lom_iface(iface: str, base: str) -> bool:
+    if iface == "lo" or iface.startswith(_VIRTUAL_IFACE_PREFIXES):
+        return False
+    if os.path.isdir(os.path.join(base, iface, "wireless")):
+        return False
+    if _is_external_usb_or_typec_nic(iface, base):
+        return False
+    return True
+
+
+def _dmidecode_text() -> str:
+    return _run(["dmidecode", "-t", "1", "-t", "2", "-t", "11"], timeout=8)
+
+
+def _extract_dmi_mac_candidates(raw: str) -> tuple[list[str], list[str]]:
+    """Return (lom_macs, passthrough_macs) parsed from BIOS/OEM strings."""
+    lom: list[str] = []
+    passthrough: list[str] = []
+    for line in (raw or "").splitlines():
+        mac = _normalize_mac(line)
+        if not mac:
+            continue
+        label = line.lower()
+        if re.search(r"pass[\s_-]*through|passthrough", label):
+            if mac not in passthrough:
+                passthrough.append(mac)
+            continue
+        if re.search(r"\b(lom|lan|onboard|on-board|integrated|internal|ethernet)\b", label):
+            if mac not in lom:
+                lom.append(mac)
+    return lom, passthrough
+
+
+def detect_mac(sys_class_net: str = "/sys/class/net") -> str:
+    """Return built-in LOM MAC, then BIOS passthrough MAC.
+
+    USB/Type-C adapter MAC addresses are intentionally excluded. Returning
+    UNKNOWN is safer than linking many laptops to the same removable adapter.
+    """
+    base = sys_class_net
     try:
         for iface in sorted(os.listdir(base)):
-            if iface in ("lo",):
-                continue
-            if iface.startswith(("docker", "veth", "virbr", "br-", "tap", "tun")):
+            if not _is_candidate_lom_iface(iface, base):
                 continue
             mac_path = os.path.join(base, iface, "address")
-            if os.path.isfile(mac_path):
-                with open(mac_path) as f:
-                    mac = f.read().strip()
-                if mac and mac != "00:00:00:00:00:00":
-                    return mac.upper()
+            mac = _read_mac_file(mac_path)
+            if mac:
+                return mac
     except OSError:
         pass
+
+    dmi_lom, dmi_passthrough = _extract_dmi_mac_candidates(_dmidecode_text())
+    if dmi_lom:
+        return dmi_lom[0]
+    if dmi_passthrough:
+        return dmi_passthrough[0]
     return UNKNOWN
 
 

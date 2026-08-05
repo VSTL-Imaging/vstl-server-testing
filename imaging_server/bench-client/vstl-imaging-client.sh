@@ -126,10 +126,50 @@ MODEL=$(norm "$(dmidecode -s system-product-name || true)")
 [[ -z "$SERIAL_NO" || "$SERIAL_NO" == "TO BE FILLED BY O.E.M." ]] && \
     SERIAL_NO=$(norm "$(dmidecode -s baseboard-serial-number || true)")
 
-# Pick the first physical (non-loopback, non-virtual) interface for MAC
-MAC_ID=$(ip -o link show 2>/dev/null \
-    | awk '$2 != "lo:" && $0 !~ /(docker|veth|virbr|tap|tun)/ {gsub(":","",$2); print $(NF-2); exit}')
-MAC_ID=$(norm "$MAC_ID")
+# Pick the laptop identity MAC, never a removable USB/Type-C adapter MAC.
+# Prefer built-in LOM, then BIOS passthrough MAC. Returning UNKNOWN is safer
+# than linking many laptops to the same shared Type-C Ethernet adapter.
+is_typec_or_usb_nic() {
+    local iface="$1"
+    local device_path driver
+    [[ "$iface" == enx* || "$iface" == usb* ]] && return 0
+    device_path=$(readlink -f "/sys/class/net/$iface/device" 2>/dev/null || true)
+    [[ "$device_path" == *"/usb"* || "$device_path" == *"/thunderbolt"* ]] && return 0
+    driver=$(basename "$(readlink -f "/sys/class/net/$iface/device/driver" 2>/dev/null || true)")
+    case "$driver" in
+        asix|ax88179_178a|cdc_ether|cdc_ncm|dm9601|ipheth|kalmia|lan78xx|mos7720|mcs7830|pegasus|r8152|rtl8150|smsc75xx|smsc95xx|sr9700|usbnet)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+read_lom_iface_mac() {
+    local iface mac
+    for iface in $(ls /sys/class/net 2>/dev/null | sort); do
+        [[ "$iface" == "lo" || "$iface" == docker* || "$iface" == veth* || "$iface" == virbr* || "$iface" == br-* || "$iface" == tap* || "$iface" == tun* ]] && continue
+        [[ -d "/sys/class/net/$iface/wireless" ]] && continue
+        is_typec_or_usb_nic "$iface" && continue
+        [[ -r "/sys/class/net/$iface/address" ]] || continue
+        mac=$(tr '[:lower:]' '[:upper:]' < "/sys/class/net/$iface/address")
+        [[ "$mac" =~ ^([0-9A-F]{2}:){5}[0-9A-F]{2}$ && "$mac" != "00:00:00:00:00:00" ]] && {
+            echo "$mac"
+            return 0
+        }
+    done
+    return 1
+}
+
+read_dmi_mac_by_label() {
+    local pattern="$1"
+    dmidecode -t 1 -t 2 -t 11 2>/dev/null \
+        | awk -v pat="$pattern" '{line=tolower($0)} line ~ pat && match($0, /([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/) {print toupper(substr($0, RSTART, RLENGTH)); exit}'
+}
+
+MAC_ID=$(read_lom_iface_mac || true)
+[[ -z "$MAC_ID" ]] && MAC_ID=$(read_dmi_mac_by_label 'lom|lan|onboard|on-board|integrated|internal|ethernet' || true)
+[[ -z "$MAC_ID" ]] && MAC_ID=$(read_dmi_mac_by_label 'pass[ _-]*through|passthrough' || true)
+MAC_ID=$(norm "${MAC_ID:-UNKNOWN}")
 
 # CPU
 CPU_RAW=$(awk -F: '/^model name/{print $2; exit}' /proc/cpuinfo)

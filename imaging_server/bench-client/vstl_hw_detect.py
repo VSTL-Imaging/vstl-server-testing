@@ -1214,6 +1214,7 @@ def detect_windows_oem_key() -> str:
 # ---------------------------------------------------------------------------
 _MAC_RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b")
 _VIRTUAL_IFACE_PREFIXES = ("docker", "veth", "virbr", "br-", "tap", "tun")
+_DMI_MAC_CONTEXT_LINES = 3
 _EXTERNAL_ADAPTER_MAC_PREFIXES = {
     # Realtek USB/Type-C Ethernet adapters seen on the bench. A laptop with no
     # built-in LOM can PXE through this adapter, but the adapter MAC is not the
@@ -1322,20 +1323,73 @@ def _dmidecode_text() -> str:
     return _run(["dmidecode", "-t", "1", "-t", "2", "-t", "11"], timeout=8)
 
 
+def _is_dmi_passthrough_mac_label(text: str) -> bool:
+    label = (text or "").lower()
+    if not re.search(r"pass[\s_-]*through|passthrough", label):
+        return False
+    return bool(re.search(r"\b(mac|address|addr|lan|ethernet|nic)\b", label))
+
+
+def _is_dmi_lom_mac_label(text: str) -> bool:
+    label = (text or "").lower()
+    if re.search(r"\b(wireless|wi[-\s]?fi|wlan|bluetooth)\b", label):
+        return False
+    return bool(
+        re.search(r"\b(lom|lan|onboard|on-board|integrated|internal|ethernet|nic|network)\b", label)
+        and re.search(r"\b(mac|address|addr|lan|ethernet|nic|network)\b", label)
+    )
+
+
+def _dmi_mac_label_for_line(lines: list[str], index: int) -> str:
+    """Classify a DMI MAC line as "lom", "passthrough", or "".
+
+    Dell/Lenovo SMBIOS OEM strings sometimes split the label and MAC onto
+    neighbouring rows, e.g. "Pass Through MAC Address" followed by
+    "B4-45-06-4D-DA-A8". Prefer the closest previous label; only look forward
+    when no previous label was found.
+    """
+    line = lines[index]
+    if _is_dmi_passthrough_mac_label(line):
+        return "passthrough"
+    if _is_dmi_lom_mac_label(line):
+        return "lom"
+
+    for prev in range(index - 1, max(-1, index - _DMI_MAC_CONTEXT_LINES - 1), -1):
+        prev_line = lines[prev]
+        if _normalize_mac(prev_line):
+            break
+        if _is_dmi_passthrough_mac_label(prev_line):
+            return "passthrough"
+        if _is_dmi_lom_mac_label(prev_line):
+            return "lom"
+
+    for nxt in range(index + 1, min(len(lines), index + _DMI_MAC_CONTEXT_LINES + 1)):
+        next_line = lines[nxt]
+        if _normalize_mac(next_line):
+            break
+        if _is_dmi_passthrough_mac_label(next_line):
+            return "passthrough"
+        if _is_dmi_lom_mac_label(next_line):
+            return "lom"
+
+    return ""
+
+
 def _extract_dmi_mac_candidates(raw: str) -> tuple[list[str], list[str]]:
     """Return (lom_macs, passthrough_macs) parsed from BIOS/OEM strings."""
     lom: list[str] = []
     passthrough: list[str] = []
-    for line in (raw or "").splitlines():
+    lines = (raw or "").splitlines()
+    for index, line in enumerate(lines):
         mac = _normalize_mac(line)
         if not mac:
             continue
-        label = line.lower()
-        if re.search(r"pass[\s_-]*through|passthrough", label):
+        label = _dmi_mac_label_for_line(lines, index)
+        if label == "passthrough":
             if mac not in passthrough:
                 passthrough.append(mac)
             continue
-        if re.search(r"\b(lom|lan|onboard|on-board|integrated|internal|ethernet)\b", label):
+        if label == "lom":
             if mac not in lom:
                 lom.append(mac)
     return lom, passthrough

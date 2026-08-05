@@ -53,6 +53,33 @@ def test_detect_mac_uses_bios_passthrough_when_no_lom_is_available(tmp_path):
         assert hw.detect_mac(str(sys_net)) == "AA:BB:CC:DD:EE:F1"
 
 
+def test_detect_mac_uses_split_bios_passthrough_label_when_no_lom(tmp_path):
+    sys_net = tmp_path / "net"
+    _iface(sys_net, "enx00e04c5d33a0", "00:E0:4C:5D:33:A0")
+    dmi = "\n".join([
+        "OEM Strings",
+        "    String 1: Pass Through MAC Address",
+        "    String 2: B4-45-06-4D-DA-A8",
+    ])
+
+    with mock.patch.object(hw, "_dmidecode_text", return_value=dmi):
+        assert hw.detect_mac(str(sys_net)) == "B4:45:06:4D:DA:A8"
+
+
+def test_detect_mac_uses_split_bios_lom_before_split_passthrough(tmp_path):
+    sys_net = tmp_path / "net"
+    dmi = "\n".join([
+        "OEM Strings",
+        "    String 1: LOM MAC Address",
+        "    String 2: AA-BB-CC-DD-EE-20",
+        "    String 3: Pass Through MAC Address",
+        "    String 4: B4-45-06-4D-DA-A8",
+    ])
+
+    with mock.patch.object(hw, "_dmidecode_text", return_value=dmi):
+        assert hw.detect_mac(str(sys_net)) == "AA:BB:CC:DD:EE:20"
+
+
 def test_detect_mac_prefers_bios_passthrough_over_typec_boot_adapter(tmp_path):
     sys_net = tmp_path / "net"
     _iface(sys_net, "eth0", "00:E0:4C:5D:33:A0")

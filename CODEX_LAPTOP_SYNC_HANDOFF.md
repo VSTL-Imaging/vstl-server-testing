@@ -103,6 +103,7 @@ The user does not want weak clear methods used as secure erase fallback. Specifi
 
 - `NVMe_SOFTWARE_ZERO_CLEAR`
 - `NVMe_FORMAT_USER_DATA`
+- `NVMe_SECURE_DISCARD_CLEAR`
 
 Preferred trustable purge-class methods are controller/firmware-supported sanitize or secure erase methods, for example:
 
@@ -112,6 +113,8 @@ Preferred trustable purge-class methods are controller/firmware-supported saniti
 - ATA Security Erase / Enhanced Security Erase where supported by the drive
 
 If a laptop/SSD controller rejects all trusted purge methods, the bench should fail clearly and explain that the controller rejected the advertised native purge command. It should not silently downgrade to a weak clear method and mark it as trusted purge.
+
+2026-08-05 update: Clear-class NVMe methods are also removed from certificate/report standard mappings. If one appears in old or local cached data, certificate issuance is refused, the standard is reported as `Unsupported data sanitization method`, and capture remains unauthorized.
 
 Capture readiness requires a certified secure erase record matching the laptop serial and storage device. If capture fails with “No certified secure-erase record exists for this laptop serial and storage device,” inspect the local/server secure erase history matching logic rather than bypassing the check.
 

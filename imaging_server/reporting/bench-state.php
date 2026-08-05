@@ -22,10 +22,24 @@ if (!in_array($resource, ['session', 'queue'], true) || $benchId === '' || strle
     vstl_reply(400, ['success' => false, 'message' => 'invalid resource or bench_id']);
 }
 
+function vstl_safe_state_key(string $value): string {
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+    $safe = (string)preg_replace('/[^A-Za-z0-9._-]+/', '-', $value);
+    $safe = trim($safe, '-');
+    return substr($safe !== '' ? $safe : 'client', 0, 128);
+}
+
 $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $dataRoot = '/var/lib/vstl-reports/bench-state';
 $benchDir = $dataRoot . '/' . hash('sha256', $benchId);
-$sessionPath = $benchDir . '/session.json';
+$clientId = vstl_safe_state_key((string)($_GET['client_id'] ?? ''));
+$sessionDir = $benchDir . '/sessions';
+$sessionPath = $clientId !== ''
+    ? $sessionDir . '/' . hash('sha256', $clientId) . '.json'
+    : $benchDir . '/session.json';
 $queueDir = $benchDir . '/queue';
 
 function vstl_json_body(int $limit): array {
@@ -78,6 +92,8 @@ if ($resource === 'session') {
             vstl_reply(400, ['success' => false, 'message' => 'session token required']);
         }
         $stored = [
+            'bench_id' => $benchId,
+            'client_id' => $clientId,
             'token' => (string)$session['token'],
             'expires_at' => (string)($session['expires_at'] ?? ''),
             'session_id' => (string)($session['session_id'] ?? ''),

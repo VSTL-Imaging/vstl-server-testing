@@ -1,8 +1,37 @@
 # VSTL 360 Imaging - Original Server Handoff For Emergent AI
 
-Last updated: 2026-08-03
+Last updated: 2026-08-05
 
 This document is the original/main-server-only handoff for Emergent AI or another AI coding tool. It describes the production imaging server setup only. It intentionally does not document the testing server setup.
+
+## Latest Update For Emergent AI - 2026-08-05
+
+### Operator Attribution / EXPIRED_UNVERIFIED
+
+- The 72h token TTL is for the operator login/session only. It is not a DHCP/IP lease, it is not per-unit, and it does not reserve IP addresses.
+- `EXPIRED_UNVERIFIED` can still appear after the 72h change when the upload uses an old cached 24h token, production was not redeployed at the time of upload, an existing historical row has not been cleaned, or the cloud can decode the JWT but cannot trust the backing session because it is revoked, missing, or too old.
+- When the bench API key is valid, the physical unit scan should still be accepted and stored. This status is about operator credit/attribution review, not about whether the unit exists.
+- Recommended answer to Emergent: proceed with the bulk `Confirm all detected operators` button and recurrence fix. Auto-attribute missing/aged sessions when the token is validly signed and the detected operator is unambiguous, while keeping true logout/switch-user/handoff cases for manual review.
+- Bench-side requirement remains: after redeploy, every bench operator should `Logout / Switch User -> Login` again to obtain a fresh token. The bench queue flush must always attempt `POST /api/imaging/ingest` even if the local token looks expired. Dequeue only on HTTP 200.
+
+### MAC ID / Type-C Ethernet Adapter Policy
+
+- Report MAC policy: use the inbuilt LOM MAC first. If no LOM exists, use the BIOS/dock passthrough MAC as fallback. Never store a Type-C Ethernet adapter's own MAC address in reports.
+- Current bench code should reject known external USB/Type-C adapter MACs and report `UNKNOWN` rather than storing the adapter MAC.
+- Latest Dell no-LOM test: BIOS showed pass-through MAC `B4:45:06:4D:DA:A8`, but Linux bench diagnostics did not expose it in `dmidecode -t 11` or raw `/sys/firmware/dmi/tables/DMI`; the searched DMI strings contained Dell OEM fields only. In that state, the Linux bench cannot automatically read the passthrough value from DMI.
+- If the desired value must be reported for these machines, the reliable fix is either:
+  - enable BIOS MAC Address Pass-Through and use a supported Dell dock/adapter that presents the system passthrough MAC to PXE/Linux, or
+  - add a controlled manual fallback prompt when LOM/DMI passthrough is missing. The prompt should validate the operator-entered BIOS pass-through MAC, normalize it to uppercase colon format, mark source as `manual_passthrough`, and still reject Type-C adapter MACs.
+
+### Latest Main Bench Deployment
+
+- Current original repo HEAD: `5dd903a Detect passthrough MAC from raw DMI`.
+- Recent original-server bench identity commits:
+  - `5555e7d Use LOM MAC for bench identity`
+  - `e9fefd8 Prefer BIOS passthrough MAC for Type-C PXE`
+  - `e67e276 Parse split BIOS passthrough MAC labels`
+  - `5dd903a Detect passthrough MAC from raw DMI`
+- Last known main deployment package: `dist\vstl-main-deploy-5dd903a-20260805_134957.tar.gz`.
 
 ## 1. Original Server Identity
 
@@ -62,6 +91,7 @@ Bench auth/ingest behavior:
 
 - Bench must keep sending the existing `X-API-Key`.
 - Bench should also send `Authorization: Bearer <imaging session token>` after login.
+- Operator session token TTL is currently 72h after a fresh login. This is a human login token only; it does not reserve DHCP/IP addresses.
 - The cloud stamps the verified operator into reports as `User`.
 - The bench must not trust manually typed technician names over the authenticated cloud user.
 
@@ -119,6 +149,12 @@ Reports should include these fields when available:
 - Technician level
 - User
 - Bench ID
+- Lot number
+- Box number
+- Box model / model label
+- Box total units
+- Box imaged units
+- Box remaining units
 - Serial number
 - SKU / product number
 - MAC ID
@@ -165,6 +201,7 @@ Do not use these methods, even as fallback:
 
 - `NVMe_SOFTWARE_ZERO_CLEAR`
 - `NVMe_FORMAT_USER_DATA`
+- `NVMe_SECURE_DISCARD_CLEAR`
 
 Allowed/preferred purge-class methods include:
 
@@ -175,6 +212,8 @@ Allowed/preferred purge-class methods include:
 - ATA Enhanced Security Erase
 
 If the controller rejects trusted purge methods, the bench should fail clearly and explain that the SSD/controller rejected the advertised native purge command. Do not silently downgrade to weak clear and call it secure purge.
+
+2026-08-05 update: Clear-class NVMe methods are also removed from certificate/report standard mappings. If one appears in old or local cached data, certificate issuance is refused, the standard is reported as `Unsupported data sanitization method`, and capture remains unauthorized.
 
 Capture readiness must require a matching certified secure erase record for the laptop serial and storage device.
 

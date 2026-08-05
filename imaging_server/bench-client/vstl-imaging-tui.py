@@ -61,15 +61,18 @@ _WIPE_METHOD_STANDARDS = {
     "NVMe_SANITIZE_CRYPTO_ERASE": "NIST SP 800-88 Purge",
     "NVMe_SANITIZE_OVERWRITE": "NIST SP 800-88 Purge",
     "NVMe_FORMAT_CRYPTO": "NIST SP 800-88 Purge",
-    "NVMe_FORMAT_USER_DATA": "NIST SP 800-88 Clear",
-    "NVMe_SECURE_DISCARD_CLEAR": "NIST SP 800-88 Clear",
-    "NVMe_SOFTWARE_ZERO_CLEAR": "NIST SP 800-88 Clear",
     "ATA_SANITIZE_BLOCK_ERASE": "NIST SP 800-88 Purge",
     "ATA_SANITIZE_CRYPTO_SCRAMBLE": "NIST SP 800-88 Purge",
     "ATA_SECURITY_ERASE_ENHANCED": "NIST SP 800-88 Purge",
     "ATA_SECURITY_ERASE": "NIST SP 800-88 Purge",
     "NWIPE_DOD_3PASS": "DoD 5220.22-M 3-pass",
 }
+
+_UNSUPPORTED_WIPE_STANDARD = "Unsupported data sanitization method"
+_UNSUPPORTED_WIPE_MESSAGE = (
+    "Clear-class and unknown wipe methods are disabled. "
+    "Only approved purge-class methods can issue a certificate or authorize capture."
+)
 
 
 # ----------------------------------------------------------------------------
@@ -367,6 +370,7 @@ AUTH_SESSION_FILE = os.environ.get(
     "VSTL_AUTH_SESSION_FILE",
     "/var/lib/vstl/imaging-auth-session.json",
 )
+_BENCH_CLIENT_ID: str | None = None
 PENDING_INGEST_DIR = os.environ.get(
     "VSTL_PENDING_INGEST_DIR",
     "/var/lib/vstl/pending-ingest",
@@ -423,8 +427,58 @@ def _bench_id(cfg: dict) -> str:
     ).strip()
 
 
+def _safe_state_key(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip("-")
+    return (safe or "client")[:128]
+
+
+def _read_first_existing(paths: list[str]) -> str:
+    for path in paths:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                value = handle.read().strip()
+        except OSError:
+            continue
+        if value:
+            return value
+    return ""
+
+
+def _bench_client_id() -> str:
+    """Return a stable key for this booted PXE client, not the whole bench."""
+    global _BENCH_CLIENT_ID
+    if _BENCH_CLIENT_ID:
+        return _BENCH_CLIENT_ID
+    explicit = os.environ.get("VSTL_BENCH_CLIENT_ID", "").strip()
+    if explicit:
+        _BENCH_CLIENT_ID = _safe_state_key(explicit)
+        return _BENCH_CLIENT_ID
+
+    parts = [
+        _read_first_existing(["/proc/sys/kernel/random/boot_id"]),
+        _read_first_existing([
+            "/sys/class/dmi/id/product_serial",
+            "/sys/class/dmi/id/product_uuid",
+        ]),
+    ]
+    try:
+        parts.append(os.uname().nodename)
+    except (AttributeError, OSError):
+        pass
+    seed = "|".join(part for part in parts if part) or str(time.time_ns())
+    _BENCH_CLIENT_ID = hashlib.sha256(seed.encode("utf-8", "ignore")).hexdigest()[:24]
+    return _BENCH_CLIENT_ID
+
+
 def _auth_session_path() -> str:
-    return os.environ.get("VSTL_AUTH_SESSION_FILE", AUTH_SESSION_FILE)
+    explicit = os.environ.get("VSTL_AUTH_SESSION_FILE", "").strip()
+    if explicit:
+        return explicit
+    base, ext = os.path.splitext(AUTH_SESSION_FILE)
+    if not ext:
+        ext = ".json"
+    return f"{base}-{_bench_client_id()}{ext}"
+
 
 
 def _utc_epoch_from_http_date(value: str) -> int | None:
@@ -549,9 +603,15 @@ def _bench_state_request(
     bench_id = _bench_id(cfg)
     if not token or not bench_id:
         return False, {}, "VSTL_REPORT_TOKEN/VSTL_API_KEY / BENCH_ID missing"
+    resource_key = str(resource or "").strip().lower()
     params = {"resource": resource, "bench_id": bench_id}
+    if resource_key == "session":
+        params["client_id"] = _bench_client_id()
     params.update(query or {})
     url = f"{_report_base(cfg)}/bench-state.php?{urllib.parse.urlencode(params)}"
+    if body is not None and resource_key == "session":
+        body = dict(body)
+        body.setdefault("client_id", _bench_client_id())
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
         url,
@@ -610,13 +670,19 @@ def _save_local_auth_session(session: dict) -> None:
 
 
 def _save_auth_session(session: dict, cfg: dict | None = None) -> None:
-    _save_local_auth_session(session)
+    stored_session = dict(session or {})
+    stored_session["bench_client_id"] = _bench_client_id()
+    _save_local_auth_session(stored_session)
     if cfg:
         _bench_state_request(
             cfg,
             "POST",
             "session",
-            body={"bench_id": _bench_id(cfg), "session": session},
+            body={
+                "bench_id": _bench_id(cfg),
+                "client_id": _bench_client_id(),
+                "session": stored_session,
+            },
         )
 
 
@@ -7064,7 +7130,11 @@ def _compact_api_error(body: dict, raw_err: str) -> str:
 
 
 def _wipe_standard(method: str) -> str:
-    return _WIPE_METHOD_STANDARDS.get(method or "", "Certified data sanitization")
+    return _WIPE_METHOD_STANDARDS.get((method or "").strip(), _UNSUPPORTED_WIPE_STANDARD)
+
+
+def _is_certifiable_wipe_method(method: str) -> bool:
+    return (method or "").strip() in _WIPE_METHOD_STANDARDS
 
 
 def _cloud_certificate_compat_wipe_method(method: str) -> str:
@@ -7102,6 +7172,8 @@ def _local_secure_erase_certificate(
     leave a local certificate ID in the report and NFS authorization record.
     """
     method = str(result.get("method") or "")
+    if not _is_certifiable_wipe_method(method):
+        raise ValueError(_UNSUPPORTED_WIPE_MESSAGE)
     evidence = str(result.get("evidence") or "")
     basis = {
         "schema": "vstl_secure_erase_certificate_v1",
@@ -8279,6 +8351,17 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
     if not screen_erase_intro(stdscr, drive):
         return None  # cancelled
     result = screen_run_erase(stdscr, drive)
+    if result.get("ok") and not _is_certifiable_wipe_method(str(result.get("method") or "")):
+        refused_method = str(result.get("method") or "UNKNOWN").strip() or "UNKNOWN"
+        refusal = f"Unsupported wipe method {refused_method}: {_UNSUPPORTED_WIPE_MESSAGE}"
+        result = dict(result)
+        result["ok"] = False
+        result["verified"] = False
+        result["capture_gate_recorded"] = False
+        result["certificate_status"] = "refused"
+        result["error_message"] = refusal
+        evidence = str(result.get("evidence") or "")
+        result["evidence"] = (evidence + "\n" if evidence else "") + refusal
 
     # Issue a local certificate first. The backend POST enriches it when
     # available, but a verified erase must not lose its certificate just

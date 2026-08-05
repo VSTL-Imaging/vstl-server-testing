@@ -564,11 +564,15 @@ def test_nvme_sanitize_unparseable_status_fails_quickly():
     assert "did not expose SSTAT/status after 5 polls" in evidence
 
 
-def test_nvme_user_data_format_has_certificate_standard_mapping():
+def test_clear_class_nvme_methods_are_not_certificate_standard_mapped():
     assert '"NVMe_SANITIZE_OVERWRITE": "NIST SP 800-88 Purge"' in TUI
-    assert '"NVMe_FORMAT_USER_DATA": "NIST SP 800-88 Clear"' in TUI
-    assert '"NVMe_SECURE_DISCARD_CLEAR": "NIST SP 800-88 Clear"' in TUI
-    assert '"NVMe_SOFTWARE_ZERO_CLEAR": "NIST SP 800-88 Clear"' in TUI
+    assert '"NVMe_FORMAT_USER_DATA": "NIST SP 800-88 Clear"' not in TUI
+    assert '"NVMe_SECURE_DISCARD_CLEAR": "NIST SP 800-88 Clear"' not in TUI
+    assert '"NVMe_SOFTWARE_ZERO_CLEAR": "NIST SP 800-88 Clear"' not in TUI
+    assert "Unsupported data sanitization method" in TUI
+    assert "Clear-class and unknown wipe methods are disabled" in TUI
+    assert "def _is_certifiable_wipe_method(" in TUI
+    assert 'result["certificate_status"] = "refused"' in TUI
 
 
 def test_sata_ssd_refuses_blkdiscard_as_certified_secure_erase():

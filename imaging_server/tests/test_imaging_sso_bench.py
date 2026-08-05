@@ -119,7 +119,13 @@ def test_shift_session_is_cached_on_the_imaging_server():
     assert '"DELETE", "session"' in TUI
     assert "bench-state.php" in TUI
     assert "bench-state.php" in REPORT_INSTALLER
+    assert "VSTL_BENCH_CLIENT_ID" in TUI
+    assert "bench_client_id" in TUI
+    assert 'params["client_id"] = _bench_client_id()' in TUI
     assert "hash('sha256', $benchId)" in STATE_API
+    assert "$clientId = vstl_safe_state_key" in STATE_API
+    assert "$sessionDir = $benchDir . '/sessions'" in STATE_API
+    assert "hash('sha256', $clientId)" in STATE_API
     assert "'token' => (string)$session['token']" in STATE_API
 
 

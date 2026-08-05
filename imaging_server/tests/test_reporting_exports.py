@@ -316,7 +316,10 @@ def test_reporting_ingest_backfills_certificate_for_successful_erase_audits():
     assert "'cloud certificate response was missing; issued by reporting ingest'" in INGEST_PHP
     assert "$payload['secure_erase_reg_id'] = $certificateId;" in INGEST_PHP
     assert "'NVMe_SANITIZE_OVERWRITE' => 'NIST SP 800-88 Purge'" in INGEST_PHP
-    assert "'NVMe_FORMAT_USER_DATA' => 'NIST SP 800-88 Clear'" in INGEST_PHP
+    assert "'NVMe_FORMAT_USER_DATA' => 'NIST SP 800-88 Clear'" not in INGEST_PHP
+    assert "function vstl_is_certifiable_wipe_method" in INGEST_PHP
+    assert "Clear-class and unknown wipe methods are disabled" in INGEST_PHP
+    assert "$erase['certificate_status'] = 'refused';" in INGEST_PHP
 
 
 def test_csv_and_xlsx_exports_are_created(tmp_path):

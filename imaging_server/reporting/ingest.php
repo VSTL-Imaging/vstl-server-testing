@@ -44,14 +44,17 @@ function vstl_wipe_standard(string $method): string {
         'NVMe_SANITIZE_CRYPTO_ERASE' => 'NIST SP 800-88 Purge',
         'NVMe_SANITIZE_OVERWRITE' => 'NIST SP 800-88 Purge',
         'NVMe_FORMAT_CRYPTO' => 'NIST SP 800-88 Purge',
-        'NVMe_FORMAT_USER_DATA' => 'NIST SP 800-88 Clear',
         'ATA_SANITIZE_BLOCK_ERASE' => 'NIST SP 800-88 Purge',
         'ATA_SANITIZE_CRYPTO_SCRAMBLE' => 'NIST SP 800-88 Purge',
         'ATA_SECURITY_ERASE_ENHANCED' => 'NIST SP 800-88 Purge',
         'ATA_SECURITY_ERASE' => 'NIST SP 800-88 Purge',
         'NWIPE_DOD_3PASS' => 'DoD 5220.22-M 3-pass',
     ];
-    return $standards[$method] ?? 'Certified data sanitization';
+    return $standards[$method] ?? '';
+}
+
+function vstl_is_certifiable_wipe_method(string $method): bool {
+    return vstl_wipe_standard($method) !== '';
 }
 
 function vstl_sort_recursive($value) {
@@ -102,6 +105,13 @@ function vstl_issue_local_secure_erase_certificate(array &$payload): bool {
 
     $method = vstl_text($erase['method'] ?? '');
     $standard = vstl_wipe_standard($method);
+    if (!vstl_is_certifiable_wipe_method($method)) {
+        $erase['wipe_standard'] = 'Unsupported data sanitization method';
+        $erase['certificate_status'] = 'refused';
+        $erase['certificate_error'] = 'Clear-class and unknown wipe methods are disabled. Only approved purge-class methods can issue a certificate or authorize capture.';
+        $erase['capture_gate_recorded'] = false;
+        return false;
+    }
     $basis = [
         'schema' => 'vstl_secure_erase_report_certificate_v1',
         'serial_no' => vstl_text($payload['serial_no'] ?? ''),

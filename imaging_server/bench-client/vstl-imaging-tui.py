@@ -642,6 +642,24 @@ def _operator_token(operator: dict | None) -> str:
     return str(operator.get("token") or "")
 
 
+def _operator_session_snapshot(operator: dict | None) -> dict:
+    """Capture the operator token/profile needed to safely retry queued uploads."""
+    if not isinstance(operator, dict):
+        return {}
+    snapshot: dict[str, object] = {}
+    for key in ("token", "token_type", "expires_at", "session_id", "selected_layer"):
+        value = operator.get(key)
+        if value not in (None, ""):
+            snapshot[key] = value
+    user = _operator_user(operator)
+    if user:
+        snapshot["user"] = user
+    available_layers = operator.get("available_layers")
+    if available_layers:
+        snapshot["available_layers"] = available_layers
+    return snapshot
+
+
 def _operator_name(operator: dict | None) -> str:
     user = _operator_user(operator)
     return str(user.get("name") or user.get("email") or "UNKNOWN")
@@ -1628,7 +1646,7 @@ def screen_login(stdscr, cfg: dict) -> dict:
             stdscr,
             7,
             6,
-            "PIN login is once per shift; the bench reuses the 12-hour VSTL 360 session.",
+            "PIN login is once per shift; the bench reuses the 72-hour VSTL 360 session.",
             curses.color_pair(DIM_PAIR),
         )
         if last_error:
@@ -6417,6 +6435,7 @@ def _queue_pending_ingest(payload: dict, cfg: dict, operator: dict | None) -> tu
         "submission_id": submission_id,
         "operator_user_id": str(_operator_user(operator).get("id") or ""),
         "operator_name": _operator_name(operator),
+        "operator_session": _operator_session_snapshot(operator),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "payload": payload,
     }
@@ -6487,6 +6506,18 @@ def _delete_pending_ingest(cfg: dict, submission_id: str) -> None:
         pass
 
 
+def _operator_for_pending_ingest(envelope: dict, current_operator: dict | None) -> dict:
+    """Prefer the saved operator token for this queued unit; fallback for legacy queues."""
+    saved = envelope.get("operator_session")
+    if isinstance(saved, dict) and _operator_token(saved):
+        return saved
+    queued_user_id = str(envelope.get("operator_user_id") or "")
+    current_user_id = str(_operator_user(current_operator).get("id") or "")
+    if queued_user_id and queued_user_id == current_user_id and _operator_token(current_operator):
+        return current_operator or {}
+    return {}
+
+
 def _format_ingest_response(data: dict, payload: dict | None = None) -> str:
     details = []
     box = _normalize_box_scope(payload)
@@ -6518,6 +6549,7 @@ def _post_ingest_once(
     payload: dict,
     cfg: dict,
     operator_token: str,
+    clear_session_on_401: bool = True,
 ) -> tuple[bool, str, dict, int | None]:
     base = _api_base(cfg)
     key = cfg.get("VSTL_API_KEY", "")
@@ -6544,7 +6576,7 @@ def _post_ingest_once(
                 return True, _format_ingest_response(data, payload), data, resp.status
             return False, json.dumps(data)[:300], data if isinstance(data, dict) else {}, resp.status
     except urllib.error.HTTPError as e:
-        if e.code == 401 and operator_token:
+        if e.code == 401 and operator_token and clear_session_on_401:
             _clear_auth_session(cfg)
         return False, f"HTTP {e.code} {e.reason}: {e.read()[:300].decode('utf-8','replace')}", {}, e.code
     except urllib.error.URLError as e:
@@ -6557,10 +6589,10 @@ def flush_pending_ingests(
     cfg: dict,
     operator: dict | None,
 ) -> dict[str, tuple[bool, str, dict, int | None]]:
-    """Upload only this authenticated operator's queued audits."""
+    """Upload this authenticated operator's queued audits, including old-token retries."""
     user_id = str(_operator_user(operator).get("id") or "")
-    token = _operator_token(operator)
-    if not user_id or not token:
+    current_token = _operator_token(operator)
+    if not user_id:
         return {}
     results = {}
     for envelope in _list_pending_ingests(cfg, user_id):
@@ -6568,7 +6600,16 @@ def flush_pending_ingests(
         payload = envelope.get("payload")
         if not submission_id or not isinstance(payload, dict):
             continue
-        result = _post_ingest_once(payload, cfg, token)
+        queued_operator = _operator_for_pending_ingest(envelope, operator)
+        token = _operator_token(queued_operator)
+        if not token:
+            continue
+        result = _post_ingest_once(
+            payload,
+            cfg,
+            token,
+            clear_session_on_401=bool(current_token and token == current_token),
+        )
         results[submission_id] = result
         if result[0]:
             _delete_pending_ingest(cfg, submission_id)

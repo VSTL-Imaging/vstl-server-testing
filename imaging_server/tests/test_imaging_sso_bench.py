@@ -127,6 +127,9 @@ def test_completed_units_use_operator_owned_durable_retry_queue():
     assert "def _queue_pending_ingest(" in TUI
     assert "def flush_pending_ingests(" in TUI
     assert '"operator_user_id"' in TUI
+    assert '"operator_session": _operator_session_snapshot(operator)' in TUI
+    assert "def _operator_for_pending_ingest(" in TUI
+    assert "clear_session_on_401=bool(current_token and token == current_token)" in TUI
     assert 'payload["bench_submission_id"]' in TUI
     assert '"POST",\n        "queue"' in TUI
     assert '"DELETE",\n        "queue"' in TUI

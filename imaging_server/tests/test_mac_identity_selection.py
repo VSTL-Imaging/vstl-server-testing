@@ -66,6 +66,28 @@ def test_detect_mac_uses_split_bios_passthrough_label_when_no_lom(tmp_path):
         assert hw.detect_mac(str(sys_net)) == "B4:45:06:4D:DA:A8"
 
 
+def test_detect_mac_uses_compact_split_bios_passthrough_label_when_no_lom(tmp_path):
+    sys_net = tmp_path / "net"
+    _iface(sys_net, "enx00e04c5d33a0", "00:E0:4C:5D:33:A0")
+    dmi = "\n".join([
+        "OEM Strings",
+        "    String 1: Pass Through MAC Address",
+        "    String 2: B445064DDAA8",
+    ])
+
+    with mock.patch.object(hw, "_dmidecode_text", return_value=dmi):
+        assert hw.detect_mac(str(sys_net)) == "B4:45:06:4D:DA:A8"
+
+
+def test_extract_dmi_mac_candidates_accepts_raw_dmi_nul_split_passthrough():
+    raw = "Dell Inc.\x00Pass Thru MAC Address\x00B445064DDAA8\x00"
+
+    lom, passthrough = hw._extract_dmi_mac_candidates(raw.replace("\x00", "\n"))
+
+    assert lom == []
+    assert passthrough == ["B4:45:06:4D:DA:A8"]
+
+
 def test_detect_mac_uses_split_bios_lom_before_split_passthrough(tmp_path):
     sys_net = tmp_path / "net"
     dmi = "\n".join([

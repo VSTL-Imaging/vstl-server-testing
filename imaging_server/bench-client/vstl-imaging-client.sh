@@ -140,6 +140,12 @@ normalize_mac() {
     printf '%s' "$mac"
 }
 
+dmi_mac_source() {
+    dmidecode -t 1 -t 2 -t 11 -t 41 2>/dev/null || true
+    dmidecode 2>/dev/null || true
+    [[ -r /sys/firmware/dmi/tables/DMI ]] && tr '\000' '\n' < /sys/firmware/dmi/tables/DMI 2>/dev/null || true
+}
+
 is_known_external_adapter_mac() {
     local mac prefix
     mac=$(normalize_mac "${1:-}")
@@ -187,13 +193,46 @@ read_lom_iface_mac() {
 
 read_dmi_mac_by_label() {
     local pattern="$1"
-    dmidecode -t 1 -t 2 -t 11 2>/dev/null \
-        | awk -v pat="$pattern" '{line=tolower($0)} line ~ pat && match($0, /([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/) {print toupper(substr($0, RSTART, RLENGTH)); exit}' \
-        | sed 's/-/:/g'
+    local mac
+    mac=$(
+        dmi_mac_source \
+            | awk -v pat="$pattern" '
+                function colonize(raw,   cleaned, out, i) {
+                    cleaned = toupper(raw)
+                    gsub(/[^0-9A-F]/, "", cleaned)
+                    if (length(cleaned) != 12) {
+                        return ""
+                    }
+                    out = ""
+                    for (i = 1; i <= 12; i += 2) {
+                        out = out (out ? ":" : "") substr(cleaned, i, 2)
+                    }
+                    return out
+                }
+                {
+                    line = tolower($0)
+                    if (line ~ pat) {
+                        ttl = 6
+                    }
+                    if (ttl > 0 && match($0, /([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/)) {
+                        print colonize(substr($0, RSTART, RLENGTH))
+                        exit
+                    }
+                    if (ttl > 0 && match($0, /(^|[^0-9A-Fa-f])([0-9A-Fa-f]{12})([^0-9A-Fa-f]|$)/)) {
+                        print colonize(substr($0, RSTART, RLENGTH))
+                        exit
+                    }
+                    if (ttl > 0) {
+                        ttl--
+                    }
+                }
+            '
+    )
+    normalize_mac "$mac"
 }
 
 MAC_ID=$(read_dmi_mac_by_label 'lom|lan|onboard|on-board|integrated|internal|ethernet' || true)
-[[ -z "$MAC_ID" ]] && MAC_ID=$(read_dmi_mac_by_label 'pass[ _-]*through|passthrough' || true)
+[[ -z "$MAC_ID" ]] && MAC_ID=$(read_dmi_mac_by_label 'pass[ _-]*(through|thru)|passthrough|passthru' || true)
 [[ -z "$MAC_ID" ]] && MAC_ID=$(read_lom_iface_mac || true)
 MAC_ID=$(norm "${MAC_ID:-UNKNOWN}")
 

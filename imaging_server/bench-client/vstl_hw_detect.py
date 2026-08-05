@@ -1213,8 +1213,10 @@ def detect_windows_oem_key() -> str:
 # the unit identity because one shared adapter can be used across many laptops.
 # ---------------------------------------------------------------------------
 _MAC_RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b")
+_COMPACT_MAC_RE = re.compile(r"\b[0-9A-Fa-f]{12}\b")
 _VIRTUAL_IFACE_PREFIXES = ("docker", "veth", "virbr", "br-", "tap", "tun")
-_DMI_MAC_CONTEXT_LINES = 3
+_DMI_MAC_CONTEXT_LINES = 5
+_DMI_RAW_TABLES = ("/sys/firmware/dmi/tables/DMI",)
 _EXTERNAL_ADAPTER_MAC_PREFIXES = {
     # Realtek USB/Type-C Ethernet adapters seen on the bench. A laptop with no
     # built-in LOM can PXE through this adapter, but the adapter MAC is not the
@@ -1255,6 +1257,15 @@ def _normalize_mac(value: str) -> str:
         # Multicast/broadcast addresses are not valid unit identities.
         return ""
     return mac
+
+
+def _normalize_compact_mac(value: str) -> str:
+    match = _COMPACT_MAC_RE.search(value or "")
+    if not match:
+        return ""
+    compact = match.group(0)
+    colon_mac = ":".join(compact[idx : idx + 2] for idx in range(0, 12, 2))
+    return _normalize_mac(colon_mac)
 
 
 def _mac_prefix(mac: str) -> str:
@@ -1320,12 +1331,35 @@ def _is_candidate_lom_iface(iface: str, base: str) -> bool:
 
 
 def _dmidecode_text() -> str:
-    return _run(["dmidecode", "-t", "1", "-t", "2", "-t", "11"], timeout=8)
+    chunks: list[str] = []
+    for argv, timeout in (
+        (["dmidecode", "-t", "1", "-t", "2", "-t", "11", "-t", "41"], 8),
+        (["dmidecode"], 12),
+    ):
+        out = _run(argv, timeout=timeout)
+        if out and out not in chunks:
+            chunks.append(out)
+
+    for table in _DMI_RAW_TABLES:
+        try:
+            with open(table, "rb") as f:
+                raw = f.read()
+        except OSError:
+            continue
+        text = raw.decode("latin-1", errors="ignore")
+        # SMBIOS raw strings are NUL-separated. Treat control separators as
+        # new lines so labels such as "Pass Through MAC Address" can be paired
+        # with the following string value.
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]+", "\n", text)
+        if text:
+            chunks.append(text)
+
+    return "\n".join(chunks)
 
 
 def _is_dmi_passthrough_mac_label(text: str) -> bool:
     label = (text or "").lower()
-    if not re.search(r"pass[\s_-]*through|passthrough", label):
+    if not re.search(r"pass[\s_-]*(?:through|thru)|passthrough|passthru", label):
         return False
     return bool(re.search(r"\b(mac|address|addr|lan|ethernet|nic)\b", label))
 
@@ -1356,7 +1390,7 @@ def _dmi_mac_label_for_line(lines: list[str], index: int) -> str:
 
     for prev in range(index - 1, max(-1, index - _DMI_MAC_CONTEXT_LINES - 1), -1):
         prev_line = lines[prev]
-        if _normalize_mac(prev_line):
+        if _normalize_mac(prev_line) or _normalize_compact_mac(prev_line):
             break
         if _is_dmi_passthrough_mac_label(prev_line):
             return "passthrough"
@@ -1365,7 +1399,7 @@ def _dmi_mac_label_for_line(lines: list[str], index: int) -> str:
 
     for nxt in range(index + 1, min(len(lines), index + _DMI_MAC_CONTEXT_LINES + 1)):
         next_line = lines[nxt]
-        if _normalize_mac(next_line):
+        if _normalize_mac(next_line) or _normalize_compact_mac(next_line):
             break
         if _is_dmi_passthrough_mac_label(next_line):
             return "passthrough"
@@ -1381,10 +1415,12 @@ def _extract_dmi_mac_candidates(raw: str) -> tuple[list[str], list[str]]:
     passthrough: list[str] = []
     lines = (raw or "").splitlines()
     for index, line in enumerate(lines):
+        label = _dmi_mac_label_for_line(lines, index)
         mac = _normalize_mac(line)
+        if not mac and label:
+            mac = _normalize_compact_mac(line)
         if not mac:
             continue
-        label = _dmi_mac_label_for_line(lines, index)
         if label == "passthrough":
             if mac not in passthrough:
                 passthrough.append(mac)

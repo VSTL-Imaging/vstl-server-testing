@@ -54,6 +54,47 @@ def test_login_controls_layer_before_bench_screen_access():
     assert "Select your technician level" not in technician_fn
 
 
+def test_hidden_testing_mode_restore_only_bypasses_reporting_login_and_box_flow():
+    assert "TESTING_MODE_HOTKEY = 20" in TUI
+    assert "def screen_testing_mode_menu(" in TUI
+    assert "5. {TESTING_RESTORE_ONLY_LABEL}" in TUI
+    assert "special_keys={TESTING_MODE_HOTKEY: TESTING_MODE_SENTINEL}" in TUI
+    assert "if _operator_testing_mode(operator):" in TUI
+    assert "return run_testing_restore_only(stdscr, cfg)" in TUI
+
+    testing_flow = TUI[
+        TUI.index("def run_testing_restore_only("):
+        TUI.index("# ---------------------------------------------------------------------------\n# Main controller")
+    ]
+    assert "screen_login" not in testing_flow
+    assert "ensure_operator_box" not in testing_flow
+    assert "screen_lock_audit_run" not in testing_flow
+    assert "post_ingest" not in testing_flow
+    assert "post_local_report" not in testing_flow
+    assert "LOCAL_AUDIT_FILE" not in testing_flow
+    assert "phase3_secure_erase(" in testing_flow
+    assert "phase3_restore(" in testing_flow
+    assert "suppress_reporting=True" in testing_flow
+
+    secure_erase_flow = TUI[
+        TUI.index("def phase3_secure_erase("):
+        TUI.index("def phase3_capture(")
+    ]
+    assert "suppress_reporting: bool = False" in secure_erase_flow
+    assert "and not suppress_reporting" in secure_erase_flow
+    assert "_post_secure_erase_local_report(" in secure_erase_flow
+    assert "testing_mode_reporting_suppressed" in secure_erase_flow
+
+    restore_flow = TUI[
+        TUI.index("def phase3_restore("):
+        TUI.index("def screen_completion(")
+    ]
+    assert "suppress_reporting: bool = False" in restore_flow
+    assert "if suppress_reporting:" in restore_flow
+    assert '"/imaging/restore/complete"' in restore_flow
+    assert "log_suppressed" in restore_flow
+
+
 def test_capture_option_uses_backend_can_capture_flag_on_bench_menu():
     assert "def _visible_menu_options(operator" in TUI
     assert "if not _operator_has_capture_access(operator):" in TUI

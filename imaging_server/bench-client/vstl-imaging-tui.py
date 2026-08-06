@@ -74,6 +74,11 @@ _UNSUPPORTED_WIPE_MESSAGE = (
     "Only approved purge-class methods can issue a certificate or authorize capture."
 )
 
+TESTING_MODE_HOTKEY = 20  # Ctrl+T
+TESTING_MODE_SENTINEL = "__VSTL_TESTING_MODE__"
+TESTING_RESTORE_ONLY_CHOICE = 4
+TESTING_RESTORE_ONLY_LABEL = "Restore Only OS"
+
 
 # ----------------------------------------------------------------------------
 # Full-screen color fill via /dev/fb0 (used by the Display QC test).
@@ -760,6 +765,30 @@ def _operator_is_admin(operator: dict | None) -> bool:
 def _operator_has_capture_access(operator: dict | None) -> bool:
     user = _operator_user(operator)
     return _truthy_operator_value(user.get("can_capture"))
+
+
+def _is_testing_mode_hotkey(ch: int) -> bool:
+    return ch == TESTING_MODE_HOTKEY
+
+
+def _testing_mode_operator() -> dict:
+    return {
+        "token": "",
+        "selected_layer": "Layer 2",
+        "_bench_layer_confirmed": True,
+        "_testing_mode": True,
+        "user": {
+            "id": "",
+            "name": "TESTING MODE",
+            "email": "",
+            "roles": ["Testing"],
+            "can_capture": False,
+        },
+    }
+
+
+def _operator_testing_mode(operator: dict | None) -> bool:
+    return isinstance(operator, dict) and bool(operator.get("_testing_mode"))
 
 
 def _normalize_layer(value: object) -> str:
@@ -1694,6 +1723,8 @@ def screen_login(stdscr, cfg: dict) -> dict:
                 draw_footer(stdscr, "ENTER continue   S switch user   Q quit")
                 stdscr.refresh()
                 ch = stdscr.getch()
+                if _is_testing_mode_hotkey(ch):
+                    return _testing_mode_operator()
                 if ch in (10, 13, curses.KEY_ENTER):
                     screen_sync_pending(stdscr, cfg, session)
                     return session
@@ -1720,7 +1751,16 @@ def screen_login(stdscr, cfg: dict) -> dict:
         draw_footer(stdscr, "Type PIN   ENTER login   ESC clears field   Q quit")
         stdscr.move(5, 42)
         stdscr.refresh()
-        pin = _read_input_line(stdscr, 5, 42, mask=True, max_len=4).strip()
+        pin = _read_input_line(
+            stdscr,
+            5,
+            42,
+            mask=True,
+            max_len=4,
+            special_keys={TESTING_MODE_HOTKEY: TESTING_MODE_SENTINEL},
+        ).strip()
+        if pin == TESTING_MODE_SENTINEL:
+            return _testing_mode_operator()
         if not pin:
             last_error = "PIN required"
             continue
@@ -1895,6 +1935,34 @@ def screen_main_menu(stdscr, technician: str, operator: dict | None = None) -> i
         stdscr.nodelay(False)
 
 
+def screen_testing_mode_menu(stdscr) -> int:
+    """Hidden maintenance menu reached by the testing-mode hotkey."""
+    while True:
+        _begin_screen_frame(stdscr, "Testing Mode")
+        _safe_addstr(stdscr, 4, 4, "Choose an action:", curses.A_BOLD)
+        _draw_selectable_row(
+            stdscr,
+            7,
+            6,
+            f"5. {TESTING_RESTORE_ONLY_LABEL}",
+            True,
+        )
+        _safe_addstr(
+            stdscr,
+            10,
+            6,
+            "Reports are disabled for this testing-mode restore.",
+            curses.color_pair(DIM_PAIR),
+        )
+        draw_footer(stdscr, "5 restore only OS   ENTER confirm   Q quit")
+        stdscr.refresh()
+        ch = stdscr.getch()
+        if ch in (ord("5"), 10, 13, curses.KEY_ENTER):
+            return TESTING_RESTORE_ONLY_CHOICE
+        if ch in (ord("q"), ord("Q")):
+            sys.exit(0)
+
+
 # ---------------------------------------------------------------------------
 # Phase 2A — Lock & MDM/BIOS Audit screens
 # ---------------------------------------------------------------------------
@@ -2016,13 +2084,22 @@ def screen_lock_audit_clear(stdscr, audit: dict) -> None:
     _wait_with_skip(stdscr, 3)
 
 
-def _read_input_line(stdscr, y: int, x: int, mask: bool, max_len: int = 64) -> str:
+def _read_input_line(
+    stdscr,
+    y: int,
+    x: int,
+    mask: bool,
+    max_len: int = 64,
+    special_keys: Optional[dict[int, str]] = None,
+) -> str:
     """Tiny curses input — collects keystrokes until ENTER or ESC."""
     buf = ""
     curses.curs_set(1)
     try:
         while True:
             ch = stdscr.getch()
+            if special_keys and ch in special_keys:
+                return special_keys[ch]
             if ch in (10, 13, curses.KEY_ENTER):
                 return buf
             if ch in (27,):  # ESC
@@ -7349,11 +7426,20 @@ def screen_run_erase(stdscr, drive: dict) -> dict:
 
 
 def screen_erase_result(stdscr, result: dict, cert_resp: dict,
-                         cert_ok: bool) -> None:
+                         cert_ok: bool,
+                         reporting_suppressed: bool = False) -> None:
     """Show summary + verification hash. Operator presses ENTER to continue."""
     stdscr.erase()
     _h, w = stdscr.getmaxyx()
-    if result.get("ok") and cert_ok:
+    if result.get("ok") and reporting_suppressed:
+        draw_header(stdscr, "Phase 3 - Erase OK / Testing Mode")
+        top_attr = curses.A_BOLD | curses.color_pair(GREEN_PAIR)
+        top_line = ("Erase completed; report submission is disabled", top_attr)
+        detail_lines = [(
+            "Testing mode did not issue a certificate or send a bench report.",
+            curses.color_pair(DIM_PAIR),
+        )]
+    elif result.get("ok") and cert_ok:
         remote_ok = cert_resp.get("remote_post_ok")
         if remote_ok is False:
             draw_header(stdscr, "Phase 3 — Erase Certified / Server Pending")
@@ -7411,14 +7497,15 @@ def screen_erase_result(stdscr, result: dict, cert_resp: dict,
          curses.color_pair(DIM_PAIR)),
         (f"Verified : {'YES' if result.get('verified') else 'NO'}",
          curses.color_pair(GREEN_PAIR if result.get('verified') else YELLOW_PAIR)),
-        (
+    ]
+    if not reporting_suppressed:
+        lines.append((
             f"Capture  : {'AUTHORIZED' if result.get('capture_gate_recorded') else 'NOT AUTHORIZED'}",
             curses.color_pair(
                 GREEN_PAIR if result.get("capture_gate_recorded") else RED_PAIR
             ) | curses.A_BOLD,
-        ),
-    ]
-    if cert_ok and cert_resp.get("certificate_id"):
+        ))
+    if not reporting_suppressed and cert_ok and cert_resp.get("certificate_id"):
         lines.append(("", 0))
         lines.append((f"Cert ID  : {cert_resp.get('certificate_id','')}",
                       curses.A_BOLD))
@@ -8248,7 +8335,8 @@ def screen_run_restore(stdscr, ident: dict, drive: dict,
         _restore_main_console_font(stdscr)
 
 
-def screen_restore_result(stdscr, result: dict, log_ok: bool) -> None:
+def screen_restore_result(stdscr, result: dict, log_ok: bool,
+                          reporting_suppressed: bool = False) -> None:
     stdscr.erase()
     if result.get("ok"):
         draw_header(stdscr, "Phase 3 - Restore OK")
@@ -8267,7 +8355,11 @@ def screen_restore_result(stdscr, result: dict, log_ok: bool) -> None:
               curses.color_pair(DIM_PAIR)),
              (f"Verified : {'YES' if result.get('verified') else 'NO'}",
               curses.color_pair(GREEN_PAIR if result.get('verified') else YELLOW_PAIR))]
-    if not log_ok:
+    if reporting_suppressed:
+        lines.append(("", 0))
+        lines.append(("Testing mode: restore log was not posted.",
+                       curses.color_pair(DIM_PAIR)))
+    elif not log_ok:
         lines.append(("", 0))
         lines.append(("Restore log POST to backend failed",
                        curses.color_pair(YELLOW_PAIR)))
@@ -8338,7 +8430,8 @@ def _check_secure_erase_authorization(
 
 
 def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
-                         tech: str, operator: dict | None = None) -> Optional[dict]:
+                         tech: str, operator: dict | None = None,
+                         suppress_reporting: bool = False) -> Optional[dict]:
     """Run the full Phase-3 Secure Erase sub-flow:
        detect drive -> confirm -> wipe -> POST certificate -> show result.
     Returns the wipe result dict (or None if operator cancelled)."""
@@ -8368,7 +8461,15 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
     # because the cloud registration hop fails.
     cert_resp: dict = {}
     cert_ok = False
-    if result.get("ok") and result.get("method"):
+    if suppress_reporting and result.get("ok"):
+        cert_resp = {
+            "wipe_standard": _wipe_standard(str(result.get("method") or "")),
+            "certificate_status": "testing_mode_suppressed",
+            "remote_post_ok": False,
+            "remote_error": "testing mode suppressed",
+        }
+        result["testing_mode_reporting_suppressed"] = True
+    elif result.get("ok") and result.get("method"):
         local_cert = _local_secure_erase_certificate(
             ident, drive, result, cfg, tech,
         )
@@ -8461,7 +8562,9 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
         cert_ok = True
 
     gate_record = {"ok": False, "issues": ["Secure erase did not complete successfully."]}
-    if result.get("ok") and result.get("verified"):
+    if suppress_reporting:
+        gate_record = {"ok": False, "issues": ["Testing mode: capture authorization not recorded."]}
+    elif result.get("ok") and result.get("verified"):
         gate_record = _record_secure_erase_authorization(
             ident, drive, result, cert_resp, cert_ok, cfg,
         )
@@ -8470,14 +8573,25 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
         gate_record.get("path")
         or "; ".join(gate_record.get("issues") or [])
     )
-    if result.get("ok") and result.get("verified") and cert_resp:
+    if (
+        result.get("ok")
+        and result.get("verified")
+        and cert_resp
+        and not suppress_reporting
+    ):
         report_ok, report_msg = _post_secure_erase_local_report(
             ident, drive, result, cert_resp, gate_record, cfg, tech, operator,
         )
         result["local_report_post_ok"] = bool(report_ok)
         result["local_report_post_message"] = report_msg
 
-    screen_erase_result(stdscr, result, cert_resp, cert_ok)
+    screen_erase_result(
+        stdscr,
+        result,
+        cert_resp,
+        cert_ok,
+        reporting_suppressed=suppress_reporting,
+    )
     return {
         "result": result,
         "certificate": cert_resp,
@@ -8592,7 +8706,8 @@ def phase3_capture(stdscr, ident: dict, cfg: dict,
 
 
 def phase3_restore(stdscr, ident: dict, cfg: dict,
-                    tech: str, cpu_info: Optional[dict] = None) -> Optional[dict]:
+                    tech: str, cpu_info: Optional[dict] = None,
+                    suppress_reporting: bool = False) -> Optional[dict]:
     """Run the full Phase-3 Restore sub-flow:
        lookup golden copy -> mount NFS -> restore -> POST result.
     The Server Process lookup order is exact SKU/Unit Part Number first,
@@ -8638,7 +8753,8 @@ def phase3_restore(stdscr, ident: dict, cfg: dict,
     result = screen_run_restore(stdscr, ident, drive, golden_copy, nfs_settings)
     ir.umount_nfs()
 
-    # Log to backend regardless of success
+    # Log to backend regardless of success, except for the hidden testing mode
+    # where every app/report submission is intentionally suppressed.
     log_body = {
         "serial_no":          ident.get("serial_no", ""),
         "image_name":         result.get("image_name", ""),
@@ -8660,11 +8776,26 @@ def phase3_restore(stdscr, ident: dict, cfg: dict,
         "os_token":           result.get("os_token", ""),
         "match_type":         result.get("match_type", golden_copy.get("match_type", "")),
     }
-    log_ok, log_resp, _err = _api_post(
-        "/imaging/restore/complete", log_body, cfg, timeout=60,
+    log_resp: dict = {}
+    if suppress_reporting:
+        log_ok = True
+        result["testing_mode_reporting_suppressed"] = True
+    else:
+        log_ok, log_resp, _err = _api_post(
+            "/imaging/restore/complete", log_body, cfg, timeout=60,
+        )
+    screen_restore_result(
+        stdscr,
+        result,
+        log_ok,
+        reporting_suppressed=suppress_reporting,
     )
-    screen_restore_result(stdscr, result, log_ok)
-    return {"result": result, "log_ok": log_ok, "log_resp": log_resp}
+    return {
+        "result": result,
+        "log_ok": log_ok,
+        "log_resp": log_resp,
+        "log_suppressed": bool(suppress_reporting),
+    }
 
 
 def screen_completion(stdscr, ident: dict, ingest_ok: bool, ingest_msg: str,
@@ -8782,6 +8913,110 @@ def screen_completion(stdscr, ident: dict, ingest_ok: bool, ingest_msg: str,
             sys.exit(2)  # signals entrypoint shell to skip auto-shutdown
 
 
+def screen_testing_restore_completion(stdscr, ident: dict,
+                                      erase_result: dict | None,
+                                      restore_result: dict | None) -> None:
+    """Final screen for the hidden restore-only testing workflow."""
+    erase_ok = bool(
+        erase_result
+        and erase_result.get("ok")
+        and erase_result.get("verified")
+    )
+    restore_ok = bool(
+        restore_result
+        and restore_result.get("ok")
+        and restore_result.get("verified")
+    )
+    stdscr.erase()
+    draw_header(stdscr, "Testing Mode - Restore Only OS")
+    h, w = stdscr.getmaxyx()
+    status = (
+        "Restore-only OS completed"
+        if restore_ok else
+        "Restore-only OS did not complete"
+    )
+    color = GREEN_PAIR if restore_ok else RED_PAIR
+    lines = [
+        (status, curses.A_BOLD | curses.color_pair(color)),
+        ("", 0),
+        (f"Serial No.: {ident.get('serial_no', '(unknown)')}", curses.A_BOLD),
+        (f"Brand / Model: {ident.get('brand', 'UNKNOWN')}  {ident.get('model', 'UNKNOWN')}", curses.A_NORMAL),
+        ("", 0),
+        (f"Wipe    : {'PASS' if erase_ok else 'FAIL / SKIPPED'}",
+         curses.color_pair(GREEN_PAIR if erase_ok else RED_PAIR)),
+        (f"Restore : {'PASS' if restore_ok else 'FAIL / SKIPPED'}",
+         curses.color_pair(GREEN_PAIR if restore_ok else RED_PAIR)),
+        ("", 0),
+        ("No VSTL app audit or bench report was submitted.",
+         curses.A_BOLD | curses.color_pair(YELLOW_PAIR)),
+    ]
+    if restore_result and restore_result.get("image_name"):
+        lines.insert(
+            7,
+            (f"Image   : {str(restore_result.get('image_name'))[: max(20, w - 18)]}",
+             curses.color_pair(CYAN_PAIR)),
+        )
+    center_block(stdscr, lines, top_offset=4)
+    draw_footer(stdscr, "ENTER restart system   Q drop to shell")
+    stdscr.refresh()
+
+    while True:
+        ch = stdscr.getch()
+        if ch in (10, 13, curses.KEY_ENTER):
+            return
+        if ch in (ord("q"), ord("Q")):
+            sys.exit(2)
+
+
+def run_testing_restore_only(stdscr, cfg: dict) -> int:
+    """Hidden testing workflow: wipe then restore an OS image without reporting."""
+    tech = "TESTING"
+    _begin_screen_frame(stdscr, "Testing Mode - Restore Only OS")
+    center_block(stdscr, [
+        ("Detecting system identity and available image backup...", curses.A_BOLD),
+        ("Reports are disabled for this run.", curses.color_pair(DIM_PAIR)),
+    ], top_offset=5)
+    draw_footer(stdscr, "Please wait")
+    stdscr.refresh()
+
+    ident = hw.detect_identity()
+    cpu = hw.detect_cpu()
+    if not _restore_backup_available(stdscr, ident, cfg, cpu):
+        screen_testing_restore_completion(stdscr, ident, None, None)
+        return 0
+
+    erase = phase3_secure_erase(
+        stdscr,
+        ident,
+        cfg,
+        tech,
+        operator=None,
+        suppress_reporting=True,
+    )
+    erase_result = (erase or {}).get("result") or {}
+    if not (erase_result.get("ok") and erase_result.get("verified")):
+        _show_message(
+            stdscr,
+            "Restore cancelled because drive wipe did not complete.",
+            color=RED_PAIR,
+            secs=4,
+        )
+        screen_testing_restore_completion(stdscr, ident, erase_result, None)
+        return 0
+
+    restore = phase3_restore(
+        stdscr,
+        ident,
+        cfg,
+        tech,
+        cpu_info=cpu,
+        suppress_reporting=True,
+    )
+    restore_result = (restore or {}).get("result") or {}
+    screen_testing_restore_completion(stdscr, ident, erase_result, restore_result)
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Main controller
 # ---------------------------------------------------------------------------
@@ -8798,6 +9033,11 @@ def run(stdscr) -> int:
     while True:
         operator = screen_login(stdscr, cfg)
         _drain_pending_input(stdscr)
+        if _operator_testing_mode(operator):
+            choice = screen_testing_mode_menu(stdscr)
+            if choice == TESTING_RESTORE_ONLY_CHOICE:
+                return run_testing_restore_only(stdscr, cfg)
+            continue
         if not operator.get("_bench_layer_confirmed") and _operator_has_layer_access(operator):
             selected_layer = screen_working_layer(stdscr, _operator_name(operator))
             if not selected_layer:

@@ -227,6 +227,15 @@ def test_keyboard_language_falls_back_to_profile_and_raw_keyboard():
     row = exporter.flatten({"payload": payload})
     assert row["Keyboard Language"] == "CANADIAN FRENCH"
 
+    payload["raw_data"].pop("keyboard", None)
+    payload["keyboard_type"] = "POLISH QWERTY WITH BACK LIGHT"
+    row = exporter.flatten({"payload": payload})
+    assert row["Keyboard Language"] == "POLISH"
+
+    payload["keyboard_type"] = "US QWERTY WITH ARABIC PRINT WITH BACK LIGHT"
+    row = exporter.flatten({"payload": payload})
+    assert row["Keyboard Language"] == "US WITH ARABIC PRINT"
+
 
 def test_flatten_normalizes_audit_submission_status():
     payload = _sample_payload()

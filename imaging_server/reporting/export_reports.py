@@ -155,6 +155,20 @@ def _first_text(*values) -> str:
     return ""
 
 
+def _keyboard_language_from_type(value) -> str:
+    text = re.sub(r"\s+", " ", _text(value).upper()).strip()
+    if not text:
+        return ""
+    match = re.match(r"(.+?)\s+(QWERTY|AZERTY|QWERTZ)\b(.*)$", text)
+    if not match:
+        return ""
+    printed = match.group(1).strip()
+    suffix = match.group(3) or ""
+    if re.search(r"\bWITH\s+ARABIC\s+PRINT\b", suffix):
+        printed = f"{printed} WITH ARABIC PRINT"
+    return printed
+
+
 def _keyboard_language(payload: dict, raw: dict) -> str:
     profile = payload.get("keyboard_profile")
     if not isinstance(profile, dict):
@@ -166,6 +180,7 @@ def _keyboard_language(payload: dict, raw: dict) -> str:
         payload.get("keyboard_language"),
         profile.get("print_format"),
         raw_keyboard.get("print_format"),
+        _keyboard_language_from_type(payload.get("keyboard_type")),
     )
 
 

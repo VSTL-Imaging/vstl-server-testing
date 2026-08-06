@@ -1005,7 +1005,7 @@ fi
 # in step 5b of the build script. That way PXE boot and USB boot behave
 # exactly the same — same auto-run, same batch flag, same locale skip.
 BOOT_IPXE="$PXE_ROOT/boot.ipxe"
-KCMD_BODY="boot=live union=overlay username=user config components quiet loglevel=3 panic=15 noswap nomodeset net.ifnames=0 usbcore.autosuspend=-1 ethdevice-timeout=35 ethdev-dhcp-max-loop=12 e1000e.SmartPowerDownEnable=0 pcie_aspm=off fetch=http://${SERVER_IP}/vstl-pxe/filesystem.squashfs ocs_live_run=/opt/vstl/vstl-bench-entry.sh ocs_live_batch=yes ocs_live_extra_param= ocs_lang=en_US.UTF-8 ocs_live_keymap=NONE keyboard-layouts=NONE locales=en_US.UTF-8 ocs_live_run_tty=/dev/tty1 noprompt"
+KCMD_BODY="boot=live union=overlay username=user config components quiet loglevel=3 panic=15 noswap nomodeset net.ifnames=0 usbcore.autosuspend=-1 ethdevice-timeout=120 ethdev-dhcp-max-loop=40 e1000e.SmartPowerDownEnable=0 pcie_aspm=off fetch=http://${SERVER_IP}/vstl-pxe/filesystem.squashfs ocs_live_run=/opt/vstl/vstl-bench-entry.sh ocs_live_batch=yes ocs_live_extra_param= ocs_lang=en_US.UTF-8 ocs_live_keymap=NONE keyboard-layouts=NONE locales=en_US.UTF-8 ocs_live_run_tty=/dev/tty1 noprompt"
 # iPXE tells live-boot which firmware NIC fetched the kernel. Keep this fixed
 # to net0, matching the main server route that actually reaches Linux ipconfig
 # on the USB-C test adapters. BOOTIF must use PXELINUX's hyphenated MAC form
@@ -1360,7 +1360,7 @@ INITRD_CPIO_BYTES=$(stat -c '%s' "$PXE_ROOT/initrd.cpio" 2>/dev/null || echo 0)
 
 # Shared kernel cmdline body (sans the leading `initrd=NAME`). Kept on one
 # line so iPXE preserves token spacing exactly as the kernel parser expects.
-KCMD_BODY="boot=live union=overlay username=user config components quiet loglevel=3 panic=15 noswap nomodeset net.ifnames=0 usbcore.autosuspend=-1 ethdevice-timeout=35 ethdev-dhcp-max-loop=12 e1000e.SmartPowerDownEnable=0 pcie_aspm=off fetch=http://${SERVER_IP}/vstl-pxe/filesystem.squashfs ocs_live_run=/opt/vstl/vstl-bench-entry.sh ocs_live_batch=yes ocs_live_extra_param= ocs_lang=en_US.UTF-8 ocs_live_keymap=NONE keyboard-layouts=NONE locales=en_US.UTF-8 ocs_live_run_tty=/dev/tty1 noprompt"
+KCMD_BODY="boot=live union=overlay username=user config components quiet loglevel=3 panic=15 noswap nomodeset net.ifnames=0 usbcore.autosuspend=-1 ethdevice-timeout=120 ethdev-dhcp-max-loop=40 e1000e.SmartPowerDownEnable=0 pcie_aspm=off fetch=http://${SERVER_IP}/vstl-pxe/filesystem.squashfs ocs_live_run=/opt/vstl/vstl-bench-entry.sh ocs_live_batch=yes ocs_live_extra_param= ocs_lang=en_US.UTF-8 ocs_live_keymap=NONE keyboard-layouts=NONE locales=en_US.UTF-8 ocs_live_run_tty=/dev/tty1 noprompt"
 IPXE_SELECT_PXE_NIC=$(cat <<'IPXESELECT'
 # VSTL main-compatible PXE NIC handoff. Do not probe alternate iPXE NICs here:
 # Type-C adapters on .45 froze after initrd when this block tried net1/net2

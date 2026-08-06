@@ -191,8 +191,8 @@ def test_kcmd_body_shared_between_diagnostic_variants():
     # And the Clonezilla ocs_live entry point
     assert "ocs_live_run=/opt/vstl/vstl-bench-entry.sh" in SCRIPT
     assert "ip=dhcp" not in SCRIPT
-    assert "ethdevice-timeout=35" in SCRIPT
-    assert "ethdev-dhcp-max-loop=12" in SCRIPT
+    assert "ethdevice-timeout=120" in SCRIPT
+    assert "ethdev-dhcp-max-loop=40" in SCRIPT
     assert "usbcore.autosuspend=-1" in SCRIPT
     assert "e1000e.SmartPowerDownEnable=0" in SCRIPT
     assert 'KCMD_IPXE_BODY="BOOTIF=01-\\${vstl_bootif} live-netdev=\\${vstl_live_netdev} ${KCMD_BODY}"' in SCRIPT

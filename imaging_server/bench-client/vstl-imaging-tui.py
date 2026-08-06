@@ -74,7 +74,8 @@ _UNSUPPORTED_WIPE_MESSAGE = (
     "Only approved purge-class methods can issue a certificate or authorize capture."
 )
 
-TESTING_MODE_HOTKEY = 20  # Ctrl+T
+TESTING_MODE_CTRL_T = 20
+TESTING_MODE_HOTKEY_LABEL = "Ctrl+Shift+Alt+T"
 TESTING_MODE_SENTINEL = "__VSTL_TESTING_MODE__"
 TESTING_RESTORE_ONLY_CHOICE = 4
 TESTING_RESTORE_ONLY_LABEL = "Restore Only OS"
@@ -767,8 +768,42 @@ def _operator_has_capture_access(operator: dict | None) -> bool:
     return _truthy_operator_value(user.get("can_capture"))
 
 
+def _testing_modifier_chord_active(require_trigger_key: bool) -> bool:
+    try:
+        from evdev import InputDevice, ecodes, list_devices  # type: ignore
+    except Exception:
+        return False
+
+    ctrl_keys = {ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL}
+    shift_keys = {ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT}
+    alt_keys = {ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT}
+    trigger_keys = {ecodes.KEY_T}
+    required_keys = ctrl_keys | shift_keys | alt_keys | trigger_keys
+
+    for path in list_devices():
+        try:
+            dev = InputDevice(path)
+            caps = dev.capabilities()
+            key_codes = set(caps.get(ecodes.EV_KEY, []))
+            if not trigger_keys.issubset(key_codes) or not required_keys.intersection(key_codes):
+                continue
+            active = set(dev.active_keys())
+        except Exception:
+            continue
+        if not (active & ctrl_keys and active & shift_keys and active & alt_keys):
+            continue
+        if require_trigger_key and not (active & trigger_keys):
+            continue
+        return True
+    return False
+
+
 def _is_testing_mode_hotkey(ch: int) -> bool:
-    return ch == TESTING_MODE_HOTKEY
+    if ch == TESTING_MODE_CTRL_T:
+        return _testing_modifier_chord_active(require_trigger_key=False)
+    if ch == 27:
+        return _testing_modifier_chord_active(require_trigger_key=True)
+    return False
 
 
 def _testing_mode_operator() -> dict:
@@ -1757,7 +1792,6 @@ def screen_login(stdscr, cfg: dict) -> dict:
             42,
             mask=True,
             max_len=4,
-            special_keys={TESTING_MODE_HOTKEY: TESTING_MODE_SENTINEL},
         ).strip()
         if pin == TESTING_MODE_SENTINEL:
             return _testing_mode_operator()
@@ -2098,6 +2132,8 @@ def _read_input_line(
     try:
         while True:
             ch = stdscr.getch()
+            if _is_testing_mode_hotkey(ch):
+                return TESTING_MODE_SENTINEL
             if special_keys and ch in special_keys:
                 return special_keys[ch]
             if ch in (10, 13, curses.KEY_ENTER):
@@ -9277,9 +9313,18 @@ def run(stdscr) -> int:
                 erase = phase3_secure_erase(stdscr, ident, cfg, tech, operator)
                 if erase:
                     phase3_results["erase"] = erase
-                    restore = phase3_restore(stdscr, ident, cfg, tech, cpu_info=cpu)
-                    if restore:
-                        phase3_results["restore"] = restore
+                    erase_result = (erase or {}).get("result") or {}
+                    if erase_result.get("ok") and erase_result.get("verified"):
+                        restore = phase3_restore(stdscr, ident, cfg, tech, cpu_info=cpu)
+                        if restore:
+                            phase3_results["restore"] = restore
+                    else:
+                        _show_message(
+                            stdscr,
+                            "Restore cancelled because drive wipe did not complete.",
+                            color=RED_PAIR,
+                            secs=4,
+                        )
             elif choice == 1:
                 # QC Only with OPTIONAL secure erase per founder design
                 if _confirm_yn(stdscr,

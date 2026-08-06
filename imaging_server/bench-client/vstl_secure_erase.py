@@ -15,11 +15,11 @@ Method priority per design choice 1c:
     6. ATA Security-Erase-Enhanced (hdparm)             -> NIST 800-88 PURGE
     7. nwipe DoD 5220.22-M 3-pass (HDDs only)           -> DoD 5220.22-M
 
-NVMe clear-only methods are intentionally not part of the automatic
-certified flow. In particular, NVMe_FORMAT_USER_DATA,
-NVMe_SECURE_DISCARD_CLEAR, and NVMe_SOFTWARE_ZERO_CLEAR are refused as
-fallbacks because they cannot prove purge of retired, remapped, or
-over-provisioned NAND cells.
+If direct SSD purge is rejected, the bench may run a destructive Clear-class
+assist once, then retry the native Purge methods. Clear-class methods are
+never accepted as the final certified method because they cannot prove purge
+of retired, remapped, or over-provisioned NAND cells. The run completes only
+when the final post-clear Purge retry succeeds.
 
 Result schema
 -------------
@@ -57,11 +57,12 @@ from typing import Callable, Optional
 
 
 _EVIDENCE_CAP = 6000
-_DISALLOWED_NVME_CLEAR_METHODS = (
+_NVME_CLEAR_ASSIST_METHODS = (
     "NVMe_FORMAT_USER_DATA",
     "NVMe_SECURE_DISCARD_CLEAR",
     "NVMe_SOFTWARE_ZERO_CLEAR",
 )
+_SATA_CLEAR_ASSIST_METHODS = ("BLKDISCARD",)
 _NVME_SANITIZE_ACTION_LABELS = {
     2: "NVMe_SANITIZE_BLOCK_ERASE",
     3: "NVMe_SANITIZE_OVERWRITE",
@@ -767,12 +768,27 @@ def _ata_security_disable(device: str, password: str = "vstl") -> tuple[bool, st
 def _erase_failure_reason(evidence: str) -> str:
     """Extract a concise, operator-friendly reason from raw wipe evidence."""
     normalized = evidence.lower()
-    if "nvme purge-only policy" in normalized:
+    if "clear assist completed; final nvme purge retry still failed" in normalized:
         return (
-            "NVMe controller rejected every native Purge method. Clear fallback "
-            "methods are disabled by policy, so this drive cannot be certified "
-            "from the bench without a vendor/BIOS secure erase tool or drive "
-            "replacement."
+            "A Clear wipe completed, but the NVMe controller still rejected the "
+            "required final Purge method. Certification is blocked until a native "
+            "Purge succeeds."
+        )
+    if "clear assist failed before final nvme purge retry" in normalized:
+        return (
+            "NVMe controller rejected every native Purge method, and the Clear "
+            "assist wipe also failed before the required final Purge retry."
+        )
+    if "clear assist completed; final sata ssd purge retry still failed" in normalized:
+        return (
+            "A Clear wipe completed, but the SATA SSD still rejected the required "
+            "final Purge method. Certification is blocked until a native Purge "
+            "succeeds."
+        )
+    if "clear assist failed before final sata ssd purge retry" in normalized:
+        return (
+            "SATA SSD purge failed, and the Clear assist wipe also failed before "
+            "the required final Purge retry."
         )
     if "sanitize frozen" in normalized:
         return "The drive has also frozen its ATA SANITIZE feature until the next full power cycle."
@@ -931,21 +947,25 @@ def _hdparm_security_erase(device: str,
 
 
 def _blkdiscard(device: str) -> tuple[bool, str, str]:
-    """Fail-closed placeholder for the banned TRIM/UNMAP clear path."""
-    return (
-        False,
-        "BLKDISCARD",
-        f"Refused BLKDISCARD on {device}: VSTL secure erase is purge-only.",
-    )
+    """Maintenance-only TRIM/UNMAP Clear assist; never certifies the erase."""
+    rc, out, err = _run(["blkdiscard", "-f", device], timeout=900)
+    ev = f"$ blkdiscard -f {device}\nrc={rc}\n{out}\n{err}"
+    return rc == 0, "BLKDISCARD", ev
 
 
 def _nvme_secure_discard_clear(device: str) -> tuple[bool, str, str]:
-    """Fail-closed placeholder for the banned NVMe secure-discard clear path."""
-    return (
-        False,
-        "NVMe_SECURE_DISCARD_CLEAR",
-        f"Refused NVMe secure discard on {device}: VSTL secure erase is purge-only.",
-    )
+    """NVMe logical Clear assist; never certifies the erase."""
+    commands = [
+        ["blkdiscard", "--secure", "-f", device],
+        ["blkdiscard", "-s", "-f", device],
+    ]
+    evidence_blocks: list[str] = []
+    for cmd in commands:
+        rc, out, err = _run(cmd, timeout=900)
+        evidence_blocks.append(f"$ {' '.join(cmd)}\nrc={rc}\n{out}\n{err}")
+        if rc == 0:
+            return True, "NVMe_SECURE_DISCARD_CLEAR", "\n---\n".join(evidence_blocks)
+    return False, "NVMe_SECURE_DISCARD_CLEAR", "\n---\n".join(evidence_blocks)
 
 
 def _software_zero_clear(
@@ -954,20 +974,72 @@ def _software_zero_clear(
     size_bytes: int = 0,
     chunk_size: int = 16 * 1024 * 1024,
 ) -> tuple[bool, str, str]:
-    """Fail-closed placeholder for the banned software zero-fill clear path."""
+    """Overwrite the user-addressable namespace as a Clear assist.
+
+    This is deliberately reported as Clear evidence only. It cannot certify
+    remapped or over-provisioned NAND, so the caller must still complete a
+    native purge method after this helper succeeds.
+    """
     label = "NVMe_SOFTWARE_ZERO_CLEAR"
-    if progress:
-        progress({
-            "elapsed_sec": 0,
-            "phase": "software zero clear refused by purge-only policy",
-            "method": label,
-            "percent": None,
-        })
-    return (
-        False,
-        label,
-        f"Refused software zero clear on {device}: VSTL secure erase is purge-only.",
-    )
+    started = time.monotonic()
+    try:
+        total = int(size_bytes or 0)
+    except (TypeError, ValueError):
+        total = 0
+    try:
+        zero_chunk = b"\x00" * chunk_size
+        with open(device, "r+b", buffering=0) as handle:
+            if total <= 0:
+                handle.seek(0, os.SEEK_END)
+                total = handle.tell()
+            if total <= 0:
+                return False, label, f"$ software-zero-clear {device}\ninvalid device size={total}"
+            handle.seek(0)
+            written = 0
+            last_progress = -1
+            last_update = 0.0
+            while written < total:
+                remaining = total - written
+                block = zero_chunk if remaining >= len(zero_chunk) else zero_chunk[:remaining]
+                n = handle.write(block)
+                if not n:
+                    return (
+                        False,
+                        label,
+                        f"$ software-zero-clear {device}\nwrite returned 0 at offset={written}",
+                    )
+                written += int(n)
+                now = time.monotonic()
+                percent = int((written * 100) / total)
+                if progress and (percent != last_progress or now - last_update >= 2):
+                    progress({
+                        "elapsed_sec": int(now - started),
+                        "phase": "clear assist: zero-filling user-addressable namespace",
+                        "method": label,
+                        "percent": percent,
+                    })
+                    last_progress = percent
+                    last_update = now
+            handle.flush()
+            os.fsync(handle.fileno())
+        rc_f, out_f, err_f = _run(["blockdev", "--flushbufs", device], timeout=20)
+        if progress:
+            progress({
+                "elapsed_sec": int(time.monotonic() - started),
+                "phase": "clear assist completed",
+                "method": label,
+                "percent": 100,
+            })
+        ev = (
+            f"$ software-zero-clear {device}\n"
+            f"bytes_written={total}\n"
+            f"chunk_size={chunk_size}\n"
+            f"duration_sec={int(time.monotonic() - started)}\n"
+            f"$ blockdev --flushbufs {device}\nrc={rc_f}\n{out_f}\n{err_f}"
+        )
+        return True, label, ev
+    except (OSError, PermissionError) as e:
+        return False, label, f"$ software-zero-clear {device}\nerror={e}"
 
 
 # ---------------------------------------------------------------------------
@@ -1027,6 +1099,100 @@ def _verify_wipe_sample(device: str) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
+def _run_nvme_purge_sequence(
+    device: str,
+    evidence_blocks: list[str],
+    tried: list[str],
+    progress_callback: Optional[Callable[[dict], None]],
+    attempt_label: str,
+) -> tuple[bool, str]:
+    evidence_blocks.append(f"[{attempt_label} NVMe purge attempt]")
+    sanitize_actions, support_ev = _nvme_sanitize_actions(device)
+    evidence_blocks.append(support_ev)
+    for action in sanitize_actions:
+        ok, method, ev = _nvme_sanitize(
+            device, action=action, progress=progress_callback,
+        )
+        tried.append(
+            _NVME_SANITIZE_ACTION_LABELS.get(
+                action, f"NVMe_SANITIZE_ACTION_{action}"
+            )
+        )
+        evidence_blocks.append(ev)
+        if ok:
+            return True, method
+    ok, method, ev = _nvme_format_crypto(device)
+    tried.append("NVMe_FORMAT_CRYPTO")
+    evidence_blocks.append(ev)
+    return ok, method
+
+
+def _run_nvme_clear_assist(
+    device: str,
+    drive: dict,
+    progress_callback: Optional[Callable[[dict], None]],
+) -> tuple[bool, str, str]:
+    evidence_blocks = ["[clear assist device release]\n" + _release_block_device(device)]
+    clear_steps: list[tuple[str, Callable[[], tuple[bool, str, str]]]] = [
+        ("NVMe_FORMAT_USER_DATA", lambda: _nvme_format_user_data(device)),
+        ("NVMe_SECURE_DISCARD_CLEAR", lambda: _nvme_secure_discard_clear(device)),
+        (
+            "NVMe_SOFTWARE_ZERO_CLEAR",
+            lambda: _software_zero_clear(
+                device,
+                progress=progress_callback,
+                size_bytes=int(drive.get("device_size_bytes") or 0),
+            ),
+        ),
+    ]
+
+    last_method = ""
+    for label, runner in clear_steps:
+        last_method = label
+        if progress_callback:
+            progress_callback({
+                "elapsed_sec": 0,
+                "phase": "running Clear assist before required Purge retry",
+                "method": label,
+                "percent": None,
+            })
+        ok, method, ev = runner()
+        last_method = method or label
+        evidence_blocks.append(ev)
+        if ok:
+            return True, last_method, "\n---\n".join(evidence_blocks)
+    return False, last_method, "\n---\n".join(evidence_blocks)
+
+
+def _run_sata_purge_sequence(
+    device: str,
+    evidence_blocks: list[str],
+    tried: list[str],
+    progress_callback: Optional[Callable[[dict], None]],
+    attempt_label: str,
+) -> tuple[bool, str]:
+    evidence_blocks.append(f"[{attempt_label} SATA SSD purge attempt]")
+    ok, method, ev = _hdparm_sanitize_erase(
+        device, progress=progress_callback,
+    )
+    tried.append(method or "ATA_SANITIZE")
+    evidence_blocks.append(ev)
+    if ok:
+        return True, method
+
+    ok, method, ev = _hdparm_security_erase(
+        device, progress=progress_callback,
+    )
+    tried.append(method or "ATA_SECURITY_ERASE_ENHANCED")
+    evidence_blocks.append(ev)
+    return ok, method
+
+
+def _run_sata_clear_assist(device: str) -> tuple[bool, str, str]:
+    ok, method, ev = _blkdiscard(device)
+    return ok, method, ev
+
+
 def run_secure_erase(
     drive: Optional[dict] = None,
     progress_callback: Optional[Callable[[dict], None]] = None,
@@ -1067,51 +1233,72 @@ def run_secure_erase(
     if dtype == "NVMe":
         release_ev = _release_block_device(device)
         evidence_blocks.append("[pre-erase device release]\n" + release_ev)
-        sanitize_actions, support_ev = _nvme_sanitize_actions(device)
-        evidence_blocks.append(support_ev)
-        for action in sanitize_actions:
-            ok, method, ev = _nvme_sanitize(
-                device, action=action, progress=progress_callback,
-            )
-            tried.append(
-                _NVME_SANITIZE_ACTION_LABELS.get(
-                    action, f"NVMe_SANITIZE_ACTION_{action}"
-                )
-            )
-            evidence_blocks.append(ev)
-            if ok:
-                break
-        if not ok:
-            ok, method, ev = _nvme_format_crypto(device)
-            tried.append("NVMe_FORMAT_CRYPTO")
-            evidence_blocks.append(ev)
-        if not ok:
-            evidence_blocks.append(
-                "NVMe purge-only policy: refused Clear fallback methods "
-                f"{', '.join(_DISALLOWED_NVME_CLEAR_METHODS)}. "
-                "Certified NVMe success now requires controller-level Sanitize "
-                "Block Erase, Sanitize Crypto Erase, Sanitize Overwrite, or "
-                "Format Crypto Erase."
-            )
-    elif dtype == "SATA_SSD":
-        ok, method, ev = _hdparm_sanitize_erase(
-            device, progress=progress_callback,
+        ok, method = _run_nvme_purge_sequence(
+            device, evidence_blocks, tried, progress_callback, "initial",
         )
-        tried.append(method or "ATA_SANITIZE")
-        evidence_blocks.append(ev)
-        if not ok:
-            ok, method, ev = _hdparm_security_erase(
-                device, progress=progress_callback,
-            )
-            tried.append(method or "ATA_SECURITY_ERASE_ENHANCED")
-            evidence_blocks.append(ev)
         if not ok:
             evidence_blocks.append(
-                "Refused BLKDISCARD fallback: TRIM/UNMAP does not prove that "
-                "retired, remapped, or over-provisioned NAND cells were purged. "
-                "Certified success requires the drive's native ATA Security "
-                "Erase command."
+                "Direct NVMe purge failed; running Clear assist methods "
+                f"{', '.join(_NVME_CLEAR_ASSIST_METHODS)} before the required "
+                "final Purge retry. Clear assist is not certificate-eligible."
             )
+            clear_ok, clear_method, clear_ev = _run_nvme_clear_assist(
+                device, drive, progress_callback,
+            )
+            evidence_blocks.append("[NVMe Clear assist]\n" + clear_ev)
+            if clear_ok:
+                evidence_blocks.append(
+                    f"Clear assist completed using {clear_method}; final NVMe "
+                    "Purge retry is required before certification."
+                )
+                evidence_blocks.append(
+                    "[post-clear device release]\n" + _release_block_device(device)
+                )
+                ok, method = _run_nvme_purge_sequence(
+                    device, evidence_blocks, tried, progress_callback, "post-clear",
+                )
+                if not ok:
+                    evidence_blocks.append(
+                        "Clear assist completed; final NVMe Purge retry still "
+                        "failed. Certification remains blocked."
+                    )
+            else:
+                evidence_blocks.append(
+                    f"Clear assist failed before final NVMe Purge retry; tried "
+                    f"{clear_method or ', '.join(_NVME_CLEAR_ASSIST_METHODS)}. "
+                    "Certification remains blocked."
+                )
+    elif dtype == "SATA_SSD":
+        ok, method = _run_sata_purge_sequence(
+            device, evidence_blocks, tried, progress_callback, "initial",
+        )
+        if not ok:
+            evidence_blocks.append(
+                "Direct SATA SSD purge failed; running Clear assist method "
+                f"{', '.join(_SATA_CLEAR_ASSIST_METHODS)} before the required "
+                "final Purge retry. Clear assist is not certificate-eligible."
+            )
+            clear_ok, clear_method, clear_ev = _run_sata_clear_assist(device)
+            evidence_blocks.append("[SATA SSD Clear assist]\n" + clear_ev)
+            if clear_ok:
+                evidence_blocks.append(
+                    f"Clear assist completed using {clear_method}; final SATA "
+                    "SSD Purge retry is required before certification."
+                )
+                ok, method = _run_sata_purge_sequence(
+                    device, evidence_blocks, tried, progress_callback, "post-clear",
+                )
+                if not ok:
+                    evidence_blocks.append(
+                        "Clear assist completed; final SATA SSD Purge retry still "
+                        "failed. Certification remains blocked."
+                    )
+            else:
+                evidence_blocks.append(
+                    f"Clear assist failed before final SATA SSD Purge retry; tried "
+                    f"{clear_method or ', '.join(_SATA_CLEAR_ASSIST_METHODS)}. "
+                    "Certification remains blocked."
+                )
     elif dtype == "HDD":
         ok, method, ev = _nwipe(device, method="dod3pass",
                                  progress=progress_callback)

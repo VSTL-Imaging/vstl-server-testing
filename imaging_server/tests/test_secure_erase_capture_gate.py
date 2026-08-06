@@ -323,33 +323,48 @@ def test_drive_detection_returns_serial_wwn_and_exact_byte_capacity():
     assert drive["device_size_bytes"] == 256_060_514_304
 
 
-def test_nvme_refuses_user_data_format_when_crypto_format_fails():
+def test_nvme_clear_assist_then_final_purge_retry_can_certify():
     calls = []
 
     def crypto_fail(device):
         calls.append("crypto")
         return False, "NVMe_FORMAT_CRYPTO", "crypto format rejected"
 
+    def sanitize_after_clear(device, action, progress=None):
+        calls.append(f"sanitize-{action}")
+        return True, "NVMe_SANITIZE_BLOCK_ERASE", "sanitize accepted after clear assist"
+
     with (
         mock.patch.object(erase, "_release_block_device", return_value="released"),
-        mock.patch.object(erase, "_nvme_sanitize_actions", return_value=([], "sanicap=0x00000000")),
+        mock.patch.object(
+            erase,
+            "_nvme_sanitize_actions",
+            side_effect=[
+                ([], "sanicap=0x00000000"),
+                ([2], "sanicap=0x00000001"),
+            ],
+        ),
         mock.patch.object(erase, "_nvme_format_crypto", side_effect=crypto_fail),
-        mock.patch.object(erase, "_nvme_format_user_data") as user_data_format,
+        mock.patch.object(
+            erase,
+            "_nvme_format_user_data",
+            return_value=(True, "NVMe_FORMAT_USER_DATA", "clear format completed"),
+        ) as user_data_format,
+        mock.patch.object(erase, "_nvme_sanitize", side_effect=sanitize_after_clear),
         mock.patch.object(erase, "_nvme_secure_discard_clear") as secure_discard,
         mock.patch.object(erase, "_software_zero_clear") as software_zero,
-        mock.patch.object(erase, "_verify_wipe_sample") as verify_sample,
+        mock.patch.object(erase, "_verify_wipe_sample", return_value=(True, "sample clear")),
     ):
         result = erase.run_secure_erase(_drive())
 
-    assert not result["ok"]
-    assert result["method"] == "NVMe_FORMAT_CRYPTO"
-    assert "Clear fallback methods are disabled" in result["error_message"]
+    assert result["ok"]
+    assert result["method"] == "NVMe_SANITIZE_BLOCK_ERASE"
+    assert "Clear assist completed using NVMe_FORMAT_USER_DATA" in result["evidence"]
     assert "NVMe_FORMAT_USER_DATA" in result["evidence"]
-    assert calls == ["crypto"]
-    user_data_format.assert_not_called()
+    assert calls == ["crypto", "sanitize-2"]
+    user_data_format.assert_called_once()
     secure_discard.assert_not_called()
     software_zero.assert_not_called()
-    verify_sample.assert_not_called()
 
 
 def test_nvme_format_retries_controller_namespace_variant():
@@ -375,12 +390,16 @@ def test_nvme_format_retries_controller_namespace_variant():
     ]
 
 
-def test_nvme_refuses_secure_discard_clear_when_native_purge_methods_fail():
+def test_nvme_clear_assist_success_still_fails_without_final_purge():
     with (
         mock.patch.object(erase, "_release_block_device", return_value="released"),
         mock.patch.object(erase, "_nvme_sanitize_actions", return_value=([], "sanicap=0x00000000")),
         mock.patch.object(erase, "_nvme_format_crypto", return_value=(False, "NVMe_FORMAT_CRYPTO", "crypto rejected")),
-        mock.patch.object(erase, "_nvme_format_user_data") as user_data_format,
+        mock.patch.object(
+            erase,
+            "_nvme_format_user_data",
+            return_value=(True, "NVMe_FORMAT_USER_DATA", "clear format completed"),
+        ) as user_data_format,
         mock.patch.object(erase, "_nvme_secure_discard_clear") as secure_discard,
         mock.patch.object(erase, "_software_zero_clear") as software_zero,
         mock.patch.object(erase, "_verify_wipe_sample") as verify_sample,
@@ -388,35 +407,57 @@ def test_nvme_refuses_secure_discard_clear_when_native_purge_methods_fail():
         result = erase.run_secure_erase(_drive())
 
     assert not result["ok"]
-    assert "NVMe_SECURE_DISCARD_CLEAR" in result["evidence"]
-    user_data_format.assert_not_called()
+    assert "Clear assist completed using NVMe_FORMAT_USER_DATA" in result["evidence"]
+    assert "final NVMe Purge retry still failed" in result["evidence"]
+    assert "Certification is blocked" in result["error_message"]
+    user_data_format.assert_called_once()
     secure_discard.assert_not_called()
     software_zero.assert_not_called()
     verify_sample.assert_not_called()
 
 
-def test_nvme_refuses_software_zero_clear_when_controller_rejects_everything():
+def test_nvme_clear_assist_falls_through_to_secure_discard():
     with (
         mock.patch.object(erase, "_release_block_device", return_value="released"),
-        mock.patch.object(erase, "_nvme_sanitize_actions", return_value=([], "sanicap=0x00000000")),
+        mock.patch.object(
+            erase,
+            "_nvme_sanitize_actions",
+            side_effect=[
+                ([], "sanicap=0x00000000"),
+                ([4], "sanicap=0x00000002"),
+            ],
+        ),
         mock.patch.object(erase, "_nvme_format_crypto", return_value=(False, "NVMe_FORMAT_CRYPTO", "crypto rejected")),
-        mock.patch.object(erase, "_nvme_format_user_data") as user_data_format,
-        mock.patch.object(erase, "_nvme_secure_discard_clear") as secure_discard,
+        mock.patch.object(
+            erase,
+            "_nvme_format_user_data",
+            return_value=(False, "NVMe_FORMAT_USER_DATA", "clear format rejected"),
+        ) as user_data_format,
+        mock.patch.object(
+            erase,
+            "_nvme_secure_discard_clear",
+            return_value=(True, "NVMe_SECURE_DISCARD_CLEAR", "secure discard completed"),
+        ) as secure_discard,
+        mock.patch.object(
+            erase,
+            "_nvme_sanitize",
+            return_value=(True, "NVMe_SANITIZE_CRYPTO_ERASE", "crypto sanitize accepted"),
+        ),
         mock.patch.object(erase, "_software_zero_clear") as software_zero,
-        mock.patch.object(erase, "_verify_wipe_sample") as verify_sample,
+        mock.patch.object(erase, "_verify_wipe_sample", return_value=(True, "sample clear")),
     ):
         result = erase.run_secure_erase(_drive())
 
-    assert not result["ok"]
+    assert result["ok"]
+    assert result["method"] == "NVMe_SANITIZE_CRYPTO_ERASE"
     assert "NVMe_SOFTWARE_ZERO_CLEAR" in result["evidence"]
-    assert "tried: NVMe_FORMAT_CRYPTO" in result["error_message"]
-    user_data_format.assert_not_called()
-    secure_discard.assert_not_called()
+    assert "secure discard completed" in result["evidence"]
+    user_data_format.assert_called_once()
+    secure_discard.assert_called_once()
     software_zero.assert_not_called()
-    verify_sample.assert_not_called()
 
 
-def test_software_zero_clear_is_refused_by_purge_only_policy():
+def test_software_zero_clear_overwrites_user_addressable_bytes():
     with tempfile.NamedTemporaryFile(delete=False) as handle:
         path = Path(handle.name)
         handle.write(b"A" * 8192)
@@ -428,11 +469,11 @@ def test_software_zero_clear_is_refused_by_purge_only_policy():
             size_bytes=8192,
             chunk_size=1024,
         )
-        assert not ok
+        assert ok
         assert method == "NVMe_SOFTWARE_ZERO_CLEAR"
-        assert "purge-only" in evidence
-        assert path.read_bytes() == b"A" * 8192
-        assert progress[-1]["percent"] is None
+        assert "bytes_written=8192" in evidence
+        assert path.read_bytes() == b"\x00" * 8192
+        assert progress[-1]["percent"] == 100
     finally:
         path.unlink(missing_ok=True)
 
@@ -601,7 +642,7 @@ def test_clear_class_nvme_methods_are_not_certificate_standard_mapped():
     assert 'result["certificate_status"] = "refused"' in TUI
 
 
-def test_sata_ssd_refuses_blkdiscard_as_certified_secure_erase():
+def test_sata_ssd_blkdiscard_assist_then_final_purge_retry_can_certify():
     drive = _drive(
         device="/dev/sda",
         device_type="SATA_SSD",
@@ -612,7 +653,10 @@ def test_sata_ssd_refuses_blkdiscard_as_certified_secure_erase():
         mock.patch.object(
             erase,
             "_hdparm_sanitize_erase",
-            return_value=(False, "", "ATA SANITIZE unsupported"),
+            side_effect=[
+                (False, "", "ATA SANITIZE unsupported"),
+                (True, "ATA_SANITIZE_BLOCK_ERASE", "ATA sanitize accepted after clear"),
+            ],
         ),
         mock.patch.object(
             erase,
@@ -624,13 +668,15 @@ def test_sata_ssd_refuses_blkdiscard_as_certified_secure_erase():
             "_blkdiscard",
             return_value=(True, "BLKDISCARD", "discard completed"),
         ) as blkdiscard,
+        mock.patch.object(erase, "_verify_wipe_sample", return_value=(True, "sample clear")),
     ):
         result = erase.run_secure_erase(drive)
 
-    assert not result["ok"]
-    assert not result["verified"]
-    assert "Refused BLKDISCARD fallback" in result["evidence"]
-    blkdiscard.assert_not_called()
+    assert result["ok"]
+    assert result["method"] == "ATA_SANITIZE_BLOCK_ERASE"
+    assert result["verified"]
+    assert "Clear assist completed using BLKDISCARD" in result["evidence"]
+    blkdiscard.assert_called_once()
 
 
 def test_ata_security_parser_accepts_normal_not_frozen_status():
@@ -839,7 +885,7 @@ def test_erase_failure_reason_explains_stale_enabled_security_state():
     assert "earlier ata security password state" in reason.lower()
 
 
-def test_legacy_shell_client_never_certifies_blkdiscard_trim():
+def test_legacy_shell_client_requires_final_purge_after_clear_assist():
     legacy = (ROOT / "bench-client" / "vstl-imaging-client.sh").read_text(
         encoding="utf-8"
     )
@@ -847,10 +893,14 @@ def test_legacy_shell_client_never_certifies_blkdiscard_trim():
         "# ---------- 5. Wipe (only if user passed --wipe) ----------", 1
     )[1].split("# ---------- 6. POST /api/imaging/ingest ----------", 1)[0]
 
-    assert "blkdiscard -f" not in wipe_block.lower()
-    assert "refusing TRIM fallback" in wipe_block
+    assert "Clear assist" in wipe_block
+    assert "required final Purge" in wipe_block
+    assert "final NVMe Purge retry failed after Clear assist" in wipe_block
+    assert "final ATA Purge retry failed after Clear assist" in wipe_block
     assert 'nvme format "$PRIMARY_DISK" -s 2 --force' in wipe_block
+    assert 'nvme format "$PRIMARY_DISK" -s 1 --force' in wipe_block
     assert 'nvme format "$NVME_CONTROLLER" -n "$NVME_NSID" -s 2 --force' in wipe_block
+    assert 'blkdiscard -f "$PRIMARY_DISK"' in wipe_block
     assert "--security-erase-enhanced" in wipe_block
 
 

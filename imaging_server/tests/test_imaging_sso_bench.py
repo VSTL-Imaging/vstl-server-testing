@@ -55,10 +55,12 @@ def test_login_controls_layer_before_bench_screen_access():
 
 
 def test_hidden_testing_mode_restore_only_bypasses_reporting_login_and_box_flow():
-    assert "TESTING_MODE_HOTKEY = 20" in TUI
+    assert "TESTING_MODE_CTRL_T = 20" in TUI
+    assert 'TESTING_MODE_HOTKEY_LABEL = "Ctrl+Shift+Alt+T"' in TUI
+    assert "def _testing_modifier_chord_active(" in TUI
+    assert "active & ctrl_keys and active & shift_keys and active & alt_keys" in TUI
     assert "def screen_testing_mode_menu(" in TUI
     assert "5. {TESTING_RESTORE_ONLY_LABEL}" in TUI
-    assert "special_keys={TESTING_MODE_HOTKEY: TESTING_MODE_SENTINEL}" in TUI
     assert "if _operator_testing_mode(operator):" in TUI
     assert "return run_testing_restore_only(stdscr, cfg)" in TUI
 
@@ -93,6 +95,17 @@ def test_hidden_testing_mode_restore_only_bypasses_reporting_login_and_box_flow(
     assert "if suppress_reporting:" in restore_flow
     assert '"/imaging/restore/complete"' in restore_flow
     assert "log_suppressed" in restore_flow
+
+
+def test_restore_approved_requires_verified_secure_erase_before_restore():
+    restore_branch = TUI[
+        TUI.index("if choice == 0:"):
+        TUI.index("elif choice == 1:")
+    ]
+    assert 'phase3_results["erase"] = erase' in restore_branch
+    assert 'erase_result = (erase or {}).get("result") or {}' in restore_branch
+    assert 'erase_result.get("ok") and erase_result.get("verified")' in restore_branch
+    assert "Restore cancelled because drive wipe did not complete." in restore_branch
 
 
 def test_capture_option_uses_backend_can_capture_flag_on_bench_menu():

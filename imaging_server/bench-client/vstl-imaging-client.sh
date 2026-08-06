@@ -12,7 +12,8 @@
 #   3. Lookup golden image:   GET  /api/imaging/lookup?model=...
 #   4. Trigger FOG image deployment via FOG's API
 #   5. Run hardware diagnostics (smartctl, stress-ng burn-in)
-#   6. Run certified purge-only secure wipe
+#   6. Run certified secure wipe; Clear assist is allowed only before a
+#      required final Purge retry
 #   7. Send full audit + wipe data: POST /api/imaging/ingest
 #   8. Power off (or wait for next bench laptop)
 #
@@ -439,35 +440,58 @@ WIPE_INFO_JSON='null'
 if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
     log "WIPE requested — running secure erase on $PRIMARY_DISK"
     WIPE_START=$(date -Iseconds)
-    # This legacy fallback must fail closed. BLKDISCARD/TRIM is not accepted
-    # as a certified purge because remapped and over-provisioned flash cells
-    # may remain recoverable to controller-level or forensic tooling.
+    # Clear-class helpers are allowed only as a destructive assist between
+    # failed direct purge and the required final purge retry.
     if [[ "$PRIMARY_DISK" =~ nvme ]]; then
         NVME_CONTROLLER="/dev/$(basename "$PRIMARY_DISK" | sed -E 's/n[0-9]+$//')"
         NVME_NSID="$(cat "/sys/block/$(basename "$PRIMARY_DISK")/nsid" 2>/dev/null || echo 1)"
-        if nvme format "$PRIMARY_DISK" -s 2 --force; then
-            METHOD="NVMe Format Crypto Erase"
-        elif [[ "$NVME_CONTROLLER" != "$PRIMARY_DISK" ]] \
-            && nvme format "$NVME_CONTROLLER" -n "$NVME_NSID" -s 2 --force; then
-            METHOD="NVMe Format Crypto Erase"
-        else
-            log "FATAL: NVMe crypto erase failed; refusing TRIM fallback"
-            exit 7
+        nvme_purge_crypto() {
+            nvme format "$PRIMARY_DISK" -s 2 --force \
+                || { [[ "$NVME_CONTROLLER" != "$PRIMARY_DISK" ]] \
+                    && nvme format "$NVME_CONTROLLER" -n "$NVME_NSID" -s 2 --force; }
+        }
+        nvme_clear_assist() {
+            nvme format "$PRIMARY_DISK" -s 1 --force \
+                || { [[ "$NVME_CONTROLLER" != "$PRIMARY_DISK" ]] \
+                    && nvme format "$NVME_CONTROLLER" -n "$NVME_NSID" -s 1 --force; } \
+                || blkdiscard --secure -f "$PRIMARY_DISK" \
+                || blkdiscard -s -f "$PRIMARY_DISK" \
+                || dd if=/dev/zero of="$PRIMARY_DISK" bs=16M status=progress conv=fsync
+        }
+        if ! nvme_purge_crypto; then
+            log "Direct NVMe purge failed; running Clear assist before required final Purge retry"
+            if ! nvme_clear_assist; then
+                log "FATAL: NVMe Clear assist failed; final Purge retry cannot be trusted"
+                exit 7
+            fi
+            log "NVMe Clear assist completed; retrying required final Purge"
+            if ! nvme_purge_crypto; then
+                log "FATAL: final NVMe Purge retry failed after Clear assist"
+                exit 7
+            fi
         fi
+        METHOD="NVMe Format Crypto Erase"
     else
         ERASE_PASSWORD="vstl"
-        if ! hdparm --user-master u --security-set-pass "$ERASE_PASSWORD" "$PRIMARY_DISK"; then
-            log "FATAL: could not arm ATA Security Erase on $PRIMARY_DISK"
-            exit 7
+        ata_purge() {
+            if ! hdparm --user-master u --security-set-pass "$ERASE_PASSWORD" "$PRIMARY_DISK"; then
+                return 1
+            fi
+            hdparm --user-master u --security-erase-enhanced "$ERASE_PASSWORD" "$PRIMARY_DISK" \
+                || hdparm --user-master u --security-erase "$ERASE_PASSWORD" "$PRIMARY_DISK"
+        }
+        if ! ata_purge; then
+            log "Direct ATA purge failed; running BLKDISCARD Clear assist before required final Purge retry"
+            if ! blkdiscard -f "$PRIMARY_DISK"; then
+                log "FATAL: ATA Clear assist failed; final Purge retry cannot be trusted"
+                exit 7
+            fi
+            if ! ata_purge; then
+                log "FATAL: final ATA Purge retry failed after Clear assist"
+                exit 7
+            fi
         fi
-        if hdparm --user-master u --security-erase-enhanced "$ERASE_PASSWORD" "$PRIMARY_DISK"; then
-            METHOD="ATA Security Erase Enhanced"
-        elif hdparm --user-master u --security-erase "$ERASE_PASSWORD" "$PRIMARY_DISK"; then
-            METHOD="ATA Security Erase"
-        else
-            log "FATAL: ATA Security Erase failed; refusing BLKDISCARD/TRIM fallback"
-            exit 7
-        fi
+        METHOD="ATA Security Erase Enhanced"
     fi
     WIPE_END=$(date -Iseconds)
     WIPE_INFO_JSON=$(jq -nc \

@@ -33,9 +33,13 @@ E1000E_OVERRIDE_SHA256="214b2285026f16ece07e568d0d589fff298b3bedb1db801900c7fbb9
 # Resolve the imaging-server IP the same way our other scripts do: prefer .env,
 # fall back to the first routable IPv4 on this host. We bake the IP into the
 # iPXE script so bench laptops can reach the kernel/initrd/squashfs over HTTP.
+ENV_SERVER_IP="${SERVER_IP:-}"
+ENV_PXE_SERVER_IP="${VSTL_PXE_SERVER_IP:-}"
 [[ -f "$SCRIPT_DIR/.env" ]] && source "$SCRIPT_DIR/.env"
-SERVER_IP="${SERVER_IP:-$(ip -4 -o addr show scope global 2>/dev/null \
-    | awk 'NR==1 {print $4}' | cut -d/ -f1)}"
+[[ -n "$ENV_SERVER_IP" ]] && SERVER_IP="$ENV_SERVER_IP"
+[[ -n "$ENV_PXE_SERVER_IP" ]] && VSTL_PXE_SERVER_IP="$ENV_PXE_SERVER_IP"
+SERVER_IP="${VSTL_PXE_SERVER_IP:-${SERVER_IP:-$(ip -4 -o addr show scope global 2>/dev/null \
+    | awk 'NR==1 {print $4}' | cut -d/ -f1)}}"
 SERVER_IP="${SERVER_IP:-10.255.0.75}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'

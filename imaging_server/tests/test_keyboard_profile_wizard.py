@@ -104,4 +104,4 @@ def test_tui_uses_guided_profile_for_keyboard_map_and_payload():
     assert 'labels[ecodes.KEY_SEMICOLON] = "M"' in TUI_TEXT
     assert 'labels[ecodes.KEY_Y] = "Z"' in TUI_TEXT
     assert 'payload["keyboard_profile"] = keyboard_profile' in TUI_TEXT
-
+    assert 'payload["keyboard_language"] = keyboard_profile.get("print_format", "")' in TUI_TEXT

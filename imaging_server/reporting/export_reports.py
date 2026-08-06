@@ -42,7 +42,7 @@ HEADERS = [
     "BIOS Version", "Installed OS", "OS Version",
     "OS License Key", "Display Resolution", "Display Resolution (Short)",
     "Display Type", "Display Test Result", "Display Remarks", "Keyboard Type",
-    "Keyboard Status", "Camera Status", "Speaker Status", "Microphone Status",
+    "Keyboard Language", "Keyboard Status", "Camera Status", "Speaker Status", "Microphone Status",
     "Fingerprint Status", "Driver Preflight Status", "Driver Preflight Evidence",
     "Driver Preflight Remarks", "Wi-Fi Status", "Bluetooth Status", "Ports Availability",
     "Ports Remarks", "Cosmetic Grade", "Parts Required", "Additional Remarks",
@@ -74,6 +74,7 @@ CENTER_VALUE_HEADERS = {
     "Installed OS", "OS Version",
     "OS License Key", "Display Resolution", "Display Resolution (Short)",
     "Display Type", "Display Test Result", "Display Remarks", "Keyboard Type",
+    "Keyboard Language",
     "Fingerprint Status", "Driver Preflight Status", "Cosmetic Grade",
     "Lot Number", "Box Number", "Box Model",
     "Box Total Units", "Box Imaged Units", "Box Remaining Units",
@@ -92,7 +93,7 @@ REPORT_SHEETS = [
 
 REMOVED_CAPTURE_SECURE_ERASE_HEADERS = {
     "Display Resolution", "Display Resolution (Short)", "Display Type",
-    "Display Test Result", "Display Remarks", "Keyboard Type", "Keyboard Status",
+    "Display Test Result", "Display Remarks", "Keyboard Type", "Keyboard Language", "Keyboard Status",
     "Camera Status", "Speaker Status", "Microphone Status", "Fingerprint Status",
     "Driver Preflight Status", "Driver Preflight Evidence", "Driver Preflight Remarks",
     "Wi-Fi Status", "Bluetooth Status", "Ports Availability", "Ports Remarks",
@@ -152,6 +153,20 @@ def _first_text(*values) -> str:
         if text:
             return text
     return ""
+
+
+def _keyboard_language(payload: dict, raw: dict) -> str:
+    profile = payload.get("keyboard_profile")
+    if not isinstance(profile, dict):
+        profile = {}
+    raw_keyboard = raw.get("keyboard")
+    if not isinstance(raw_keyboard, dict):
+        raw_keyboard = {}
+    return _first_text(
+        payload.get("keyboard_language"),
+        profile.get("print_format"),
+        raw_keyboard.get("print_format"),
+    )
 
 
 def _box_scope_details(payload: dict, raw: dict) -> dict[str, str]:
@@ -727,6 +742,7 @@ def flatten(record: dict) -> dict[str, str]:
         "Display Test Result": _text(display.get("result") or _test_status(tests, "display")),
         "Display Remarks": _text(display.get("remarks") or (tests.get("display") or {}).get("remarks")),
         "Keyboard Type": _text(payload.get("keyboard_type")),
+        "Keyboard Language": _keyboard_language(payload, raw),
         "Keyboard Status": _text(_test_status(tests, "keyboard") or payload.get("keyboard_status")),
         "Camera Status": _test_status(tests, "camera"),
         "Speaker Status": _test_status(tests, "speaker"),

@@ -53,6 +53,7 @@ def _sample_payload():
             "remarks": "",
         },
         "keyboard_type": "US QWERTY WITH BACK LIGHT",
+        "keyboard_language": "US",
         "burn_test": {
             "result": "PASS",
             "duration_sec": "900",
@@ -211,6 +212,20 @@ def test_flatten_contains_requested_hardware_and_qc_fields():
     assert row["Driver Preflight Status"] == "PASS"
     assert "fingerprint_linux=yes" in row["Driver Preflight Evidence"]
     assert row["Driver Preflight Remarks"] == "Linux drivers ready"
+    assert row["Keyboard Language"] == "US"
+
+
+def test_keyboard_language_falls_back_to_profile_and_raw_keyboard():
+    payload = _sample_payload()
+    payload.pop("keyboard_language", None)
+    payload["keyboard_profile"] = {"print_format": "POLISH"}
+    row = exporter.flatten({"payload": payload})
+    assert row["Keyboard Language"] == "POLISH"
+
+    payload.pop("keyboard_profile", None)
+    payload["raw_data"]["keyboard"] = {"print_format": "CANADIAN FRENCH"}
+    row = exporter.flatten({"payload": payload})
+    assert row["Keyboard Language"] == "CANADIAN FRENCH"
 
 
 def test_flatten_normalizes_audit_submission_status():
@@ -359,6 +374,7 @@ def test_csv_and_xlsx_exports_are_created(tmp_path):
         assert "<t>Installed OS</t>" not in capture_sheet
         assert "<t>Secure Erase Reg ID</t>" not in capture_sheet
         assert "<t>Display Resolution</t>" not in capture_sheet
+        assert "<t>Keyboard Language</t>" not in capture_sheet
         assert "<t>Keyboard Status</t>" not in capture_sheet
         assert "<t>Fingerprint Status</t>" not in capture_sheet
         assert "<t>Burn Stress Test Result</t>" not in capture_sheet
@@ -475,6 +491,8 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert "Secure Erase Reg ID" in exporter.CENTER_VALUE_HEADERS
     assert "Fingerprint Status" in exporter.HEADERS
     assert "Fingerprint Status" in exporter.CENTER_VALUE_HEADERS
+    assert "Keyboard Language" in exporter.HEADERS
+    assert "Keyboard Language" in exporter.CENTER_VALUE_HEADERS
     assert "Operation Elapsed Time (sec)" in exporter.HEADERS
     assert "QC Elapsed Time (sec)" in exporter.HEADERS
     assert "Restore Elapsed Time (sec)" in exporter.HEADERS
@@ -494,6 +512,7 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert exporter.HEADERS.index("Lot Number") == exporter.HEADERS.index("BIOS Lock Status") + 1
     assert exporter.HEADERS.index("Box Number") == exporter.HEADERS.index("Lot Number") + 1
     assert exporter.HEADERS.index("Box Model") == exporter.HEADERS.index("Box Number") + 1
+    assert exporter.HEADERS.index("Keyboard Language") == exporter.HEADERS.index("Keyboard Type") + 1
     assert "RAM Type" in exporter.CENTER_VALUE_HEADERS
     assert "Storage Type" in exporter.CENTER_VALUE_HEADERS
     assert "Battery Designed Capacity (mWh)" in exporter.CENTER_VALUE_HEADERS
@@ -508,6 +527,9 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert "Fingerprint Status" not in exporter._sheet_headers("Secure Erase")
     assert "Fingerprint Status" not in exporter._sheet_headers("Capture")
     assert "Driver Preflight Status" in exporter._sheet_headers("Restore")
+    assert "Keyboard Language" in exporter._sheet_headers("QC")
+    assert "Keyboard Language" not in exporter._sheet_headers("Secure Erase")
+    assert "Keyboard Language" not in exporter._sheet_headers("Capture")
     assert "Driver Preflight Evidence" in exporter._sheet_headers("QC")
     assert "Driver Preflight Remarks" not in exporter._sheet_headers("Secure Erase")
     assert "Driver Preflight Status" not in exporter._sheet_headers("Capture")
@@ -602,6 +624,7 @@ def test_csv_bundle_matches_all_xlsx_operation_split(tmp_path):
         assert "Windows 11 Pro" in capture_csv
         assert "Captured OS" in capture_csv
         assert "Display Resolution" not in capture_csv
+        assert "Keyboard Language" not in capture_csv
         assert "Secure Erase Reg ID" not in capture_csv
         assert "Fingerprint Status" not in capture_csv
         assert "Burn Stress Test Result" not in capture_csv
@@ -637,6 +660,7 @@ def test_secure_erase_sheet_keeps_reg_id_but_excludes_qc_columns(tmp_path):
         assert "SE-REG-001" in sheet
         assert "ATA_SANITIZE_BLOCK_ERASE" in sheet
         assert "<t>Display Resolution</t>" not in sheet
+        assert "<t>Keyboard Language</t>" not in sheet
         assert "<t>Keyboard Status</t>" not in sheet
         assert "<t>Fingerprint Status</t>" not in sheet
         assert "<t>Burn Stress Test Result</t>" not in sheet

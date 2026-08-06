@@ -9084,6 +9084,7 @@ def run(stdscr) -> int:
         keyboard_profile = keyboard_result.get("keyboard_profile") or {}
         if keyboard_profile:
             payload["keyboard_type"] = keyboard_profile.get("name", "")
+            payload["keyboard_language"] = keyboard_profile.get("print_format", "")
             payload["keyboard_status"] = keyboard_profile.get("backlight", "")
             payload["keyboard_profile"] = keyboard_profile
             payload.setdefault("raw_data", {})["keyboard"] = keyboard_profile

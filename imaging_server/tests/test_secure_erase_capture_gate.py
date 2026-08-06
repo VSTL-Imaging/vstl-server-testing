@@ -357,9 +357,9 @@ def test_nvme_format_retries_controller_namespace_variant():
 
     def fake_run(cmd, timeout=60):
         calls.append(cmd)
-        if cmd == ["nvme", "format", "/dev/nvme0n1", "-s", "1", "-f"]:
+        if cmd == ["nvme", "format", "/dev/nvme0n1", "-s", "1", "--force"]:
             return 1, "", "namespace path rejected"
-        if cmd == ["nvme", "format", "/dev/nvme0", "-n", "1", "-s", "1", "-f"]:
+        if cmd == ["nvme", "format", "/dev/nvme0", "-n", "1", "-s", "1", "--force"]:
             return 0, "Success formatting namespace:1\n", ""
         raise AssertionError(f"unexpected command: {cmd}")
 
@@ -370,8 +370,8 @@ def test_nvme_format_retries_controller_namespace_variant():
     assert method == "NVMe_FORMAT_USER_DATA"
     assert "namespace path rejected" in evidence
     assert calls == [
-        ["nvme", "format", "/dev/nvme0n1", "-s", "1", "-f"],
-        ["nvme", "format", "/dev/nvme0", "-n", "1", "-s", "1", "-f"],
+        ["nvme", "format", "/dev/nvme0n1", "-s", "1", "--force"],
+        ["nvme", "format", "/dev/nvme0", "-n", "1", "-s", "1", "--force"],
     ]
 
 
@@ -416,7 +416,7 @@ def test_nvme_refuses_software_zero_clear_when_controller_rejects_everything():
     verify_sample.assert_not_called()
 
 
-def test_software_zero_clear_overwrites_user_addressable_bytes():
+def test_software_zero_clear_is_refused_by_purge_only_policy():
     with tempfile.NamedTemporaryFile(delete=False) as handle:
         path = Path(handle.name)
         handle.write(b"A" * 8192)
@@ -428,11 +428,11 @@ def test_software_zero_clear_overwrites_user_addressable_bytes():
             size_bytes=8192,
             chunk_size=1024,
         )
-        assert ok
+        assert not ok
         assert method == "NVMe_SOFTWARE_ZERO_CLEAR"
-        assert "bytes_written=8192" in evidence
-        assert path.read_bytes() == b"\x00" * 8192
-        assert progress[-1]["percent"] == 100
+        assert "purge-only" in evidence
+        assert path.read_bytes() == b"A" * 8192
+        assert progress[-1]["percent"] is None
     finally:
         path.unlink(missing_ok=True)
 
@@ -542,6 +542,32 @@ def test_nvme_sanitize_completes_with_compact_sstat_format():
     assert progress[0]["method"] == "NVMe_SANITIZE_BLOCK_ERASE"
     assert progress[-1]["phase"] == "completed"
     assert progress[-1]["percent"] == 100
+
+
+def test_nvme_sanitize_retries_controller_node_when_namespace_rejects_command():
+    calls = []
+
+    def fake_run(cmd, timeout=60):
+        calls.append(cmd)
+        if cmd == ["nvme", "sanitize", "/dev/nvme0n1", "-a", "2"]:
+            return 1, "", "namespace device rejected sanitize"
+        if cmd == ["nvme", "sanitize", "/dev/nvme0", "-a", "2"]:
+            return 0, "", ""
+        if cmd == ["nvme", "sanitize-log", "/dev/nvme0"]:
+            return 0, "sprog : 65535\nsstat : 0x101\n", ""
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    with mock.patch.object(erase, "_run", side_effect=fake_run):
+        ok, method, evidence = erase._nvme_sanitize("/dev/nvme0n1", action=2)
+
+    assert ok
+    assert method == "NVMe_SANITIZE_BLOCK_ERASE"
+    assert "namespace device rejected sanitize" in evidence
+    assert calls == [
+        ["nvme", "sanitize", "/dev/nvme0n1", "-a", "2"],
+        ["nvme", "sanitize", "/dev/nvme0", "-a", "2"],
+        ["nvme", "sanitize-log", "/dev/nvme0"],
+    ]
 
 
 def test_nvme_sanitize_unparseable_status_fails_quickly():
@@ -823,7 +849,8 @@ def test_legacy_shell_client_never_certifies_blkdiscard_trim():
 
     assert "blkdiscard -f" not in wipe_block.lower()
     assert "refusing TRIM fallback" in wipe_block
-    assert 'nvme format "$PRIMARY_DISK" -s 2 -f' in wipe_block
+    assert 'nvme format "$PRIMARY_DISK" -s 2 --force' in wipe_block
+    assert 'nvme format "$NVME_CONTROLLER" -n "$NVME_NSID" -s 2 --force' in wipe_block
     assert "--security-erase-enhanced" in wipe_block
 
 

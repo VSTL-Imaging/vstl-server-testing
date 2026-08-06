@@ -12,7 +12,7 @@
 #   3. Lookup golden image:   GET  /api/imaging/lookup?model=...
 #   4. Trigger FOG image deployment via FOG's API
 #   5. Run hardware diagnostics (smartctl, stress-ng burn-in)
-#   6. Run secure wipe (nwipe/blkdiscard)
+#   6. Run certified purge-only secure wipe
 #   7. Send full audit + wipe data: POST /api/imaging/ingest
 #   8. Power off (or wait for next bench laptop)
 #
@@ -443,7 +443,12 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
     # as a certified purge because remapped and over-provisioned flash cells
     # may remain recoverable to controller-level or forensic tooling.
     if [[ "$PRIMARY_DISK" =~ nvme ]]; then
-        if nvme format "$PRIMARY_DISK" -s 2 -f; then
+        NVME_CONTROLLER="/dev/$(basename "$PRIMARY_DISK" | sed -E 's/n[0-9]+$//')"
+        NVME_NSID="$(cat "/sys/block/$(basename "$PRIMARY_DISK")/nsid" 2>/dev/null || echo 1)"
+        if nvme format "$PRIMARY_DISK" -s 2 --force; then
+            METHOD="NVMe Format Crypto Erase"
+        elif [[ "$NVME_CONTROLLER" != "$PRIMARY_DISK" ]] \
+            && nvme format "$NVME_CONTROLLER" -n "$NVME_NSID" -s 2 --force; then
             METHOD="NVMe Format Crypto Erase"
         else
             log "FATAL: NVMe crypto erase failed; refusing TRIM fallback"

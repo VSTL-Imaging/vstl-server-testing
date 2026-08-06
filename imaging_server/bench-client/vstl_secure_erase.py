@@ -407,10 +407,22 @@ def _nvme_sanitize(device: str, action: int,
             "phase": "issuing NVMe sanitize command",
             "method": label,
         })
-    rc, out, err = _run(["nvme", "sanitize", device, "-a", str(action)],
-                        timeout=30)
-    issue_ev = f"$ nvme sanitize {device} -a {action}\nrc={rc}\n{out}\n{err}"
-    if rc != 0:
+    controller, _nsid = _nvme_controller_and_nsid(device)
+    command_devices = [device]
+    if controller != device:
+        command_devices.append(controller)
+
+    issue_blocks: list[str] = []
+    poll_device = ""
+    for command_device in command_devices:
+        cmd = ["nvme", "sanitize", command_device, "-a", str(action)]
+        rc, out, err = _run(cmd, timeout=30)
+        issue_blocks.append(f"$ {' '.join(cmd)}\nrc={rc}\n{out}\n{err}")
+        if rc == 0:
+            poll_device = command_device
+            break
+    issue_ev = "\n---\n".join(issue_blocks)
+    if not poll_device:
         return False, "", issue_ev
 
     # Poll sanitize-log until SSTAT (sanitize status) goes idle/complete
@@ -421,7 +433,7 @@ def _nvme_sanitize(device: str, action: int,
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()
         if elapsed > timeout:
             return False, label, issue_ev + f"\n[timeout after {timeout}s]\n{last_log[-1000:]}"
-        rc_l, out_l, err_l = _run(["nvme", "sanitize-log", device], timeout=10)
+        rc_l, out_l, err_l = _run(["nvme", "sanitize-log", poll_device], timeout=10)
         if rc_l != 0:
             return False, label, issue_ev + f"\nsanitize-log rc={rc_l} err={err_l[:200]}"
         last_log = out_l
@@ -498,12 +510,12 @@ def _nvme_format(device: str, secure_erase_setting: int) -> tuple[bool, str, str
     )
     controller, nsid = _nvme_controller_and_nsid(device)
     commands = [
-        ["nvme", "format", device, "-s", str(secure_erase_setting), "-f"],
+        ["nvme", "format", device, "-s", str(secure_erase_setting), "--force"],
     ]
     if controller != device and nsid:
         commands.extend([
-            ["nvme", "format", controller, "-n", nsid, "-s", str(secure_erase_setting), "-f"],
-            ["nvme", "format", device, "-n", nsid, "-s", str(secure_erase_setting), "-f"],
+            ["nvme", "format", controller, "-n", nsid, "-s", str(secure_erase_setting), "--force"],
+            ["nvme", "format", device, "-n", nsid, "-s", str(secure_erase_setting), "--force"],
         ])
 
     evidence_blocks: list[str] = []
@@ -919,30 +931,21 @@ def _hdparm_security_erase(device: str,
 
 
 def _blkdiscard(device: str) -> tuple[bool, str, str]:
-    """Maintenance-only TRIM helper; not accepted as a certified purge."""
-    rc, out, err = _run(["blkdiscard", "-f", device], timeout=900)
-    ev = f"$ blkdiscard -f {device}\nrc={rc}\n{out}\n{err}"
-    return rc == 0, "BLKDISCARD", ev
+    """Fail-closed placeholder for the banned TRIM/UNMAP clear path."""
+    return (
+        False,
+        "BLKDISCARD",
+        f"Refused BLKDISCARD on {device}: VSTL secure erase is purge-only.",
+    )
 
 
 def _nvme_secure_discard_clear(device: str) -> tuple[bool, str, str]:
-    """Legacy NVMe logical Clear helper; not used by certified automation.
-
-    This is intentionally labelled Clear, not Purge. The automatic bench flow
-    now refuses it because it cannot prove purge of remapped or
-    over-provisioned NAND cells.
-    """
-    commands = [
-        ["blkdiscard", "--secure", "-f", device],
-        ["blkdiscard", "-s", "-f", device],
-    ]
-    evidence_blocks: list[str] = []
-    for cmd in commands:
-        rc, out, err = _run(cmd, timeout=900)
-        evidence_blocks.append(f"$ {' '.join(cmd)}\nrc={rc}\n{out}\n{err}")
-        if rc == 0:
-            return True, "NVMe_SECURE_DISCARD_CLEAR", "\n---\n".join(evidence_blocks)
-    return False, "NVMe_SECURE_DISCARD_CLEAR", "\n---\n".join(evidence_blocks)
+    """Fail-closed placeholder for the banned NVMe secure-discard clear path."""
+    return (
+        False,
+        "NVMe_SECURE_DISCARD_CLEAR",
+        f"Refused NVMe secure discard on {device}: VSTL secure erase is purge-only.",
+    )
 
 
 def _software_zero_clear(
@@ -951,72 +954,20 @@ def _software_zero_clear(
     size_bytes: int = 0,
     chunk_size: int = 16 * 1024 * 1024,
 ) -> tuple[bool, str, str]:
-    """Legacy helper to overwrite the full user-addressable namespace.
-
-    The automatic certified flow no longer uses this as a last resort. It is
-    deliberately reported as NIST Clear, not Purge, because over-provisioned
-    NAND cells are outside the logical namespace that software can overwrite.
-    """
+    """Fail-closed placeholder for the banned software zero-fill clear path."""
     label = "NVMe_SOFTWARE_ZERO_CLEAR"
-    started = time.monotonic()
-    try:
-        total = int(size_bytes or 0)
-    except (TypeError, ValueError):
-        total = 0
-    try:
-        zero_chunk = b"\x00" * chunk_size
-        with open(device, "r+b", buffering=0) as handle:
-            if total <= 0:
-                handle.seek(0, os.SEEK_END)
-                total = handle.tell()
-            if total <= 0:
-                return False, label, f"$ software-zero-clear {device}\ninvalid device size={total}"
-            handle.seek(0)
-            written = 0
-            last_progress = -1
-            last_update = 0.0
-            while written < total:
-                remaining = total - written
-                block = zero_chunk if remaining >= len(zero_chunk) else zero_chunk[:remaining]
-                n = handle.write(block)
-                if not n:
-                    return (
-                        False,
-                        label,
-                        f"$ software-zero-clear {device}\nwrite returned 0 at offset={written}",
-                    )
-                written += int(n)
-                now = time.monotonic()
-                percent = int((written * 100) / total)
-                if progress and (percent != last_progress or now - last_update >= 2):
-                    progress({
-                        "elapsed_sec": int(now - started),
-                        "phase": "zero-filling user-addressable namespace",
-                        "method": label,
-                        "percent": percent,
-                    })
-                    last_progress = percent
-                    last_update = now
-            handle.flush()
-            os.fsync(handle.fileno())
-        rc_f, out_f, err_f = _run(["blockdev", "--flushbufs", device], timeout=20)
-        if progress:
-            progress({
-                "elapsed_sec": int(time.monotonic() - started),
-                "phase": "completed",
-                "method": label,
-                "percent": 100,
-            })
-        ev = (
-            f"$ software-zero-clear {device}\n"
-            f"bytes_written={total}\n"
-            f"chunk_size={chunk_size}\n"
-            f"duration_sec={int(time.monotonic() - started)}\n"
-            f"$ blockdev --flushbufs {device}\nrc={rc_f}\n{out_f}\n{err_f}"
-        )
-        return True, label, ev
-    except (OSError, PermissionError) as e:
-        return False, label, f"$ software-zero-clear {device}\nerror={e}"
+    if progress:
+        progress({
+            "elapsed_sec": 0,
+            "phase": "software zero clear refused by purge-only policy",
+            "method": label,
+            "percent": None,
+        })
+    return (
+        False,
+        label,
+        f"Refused software zero clear on {device}: VSTL secure erase is purge-only.",
+    )
 
 
 # ---------------------------------------------------------------------------

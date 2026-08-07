@@ -807,23 +807,27 @@ def _testing_modifier_chord_active(require_trigger_key: bool) -> bool:
     alt_keys = {ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT}
     trigger_keys = {ecodes.KEY_T}
     required_keys = ctrl_keys | shift_keys | alt_keys | trigger_keys
+    supported_keys: set[int] = set()
+    active_keys: set[int] = set()
 
     for path in list_devices():
         try:
             dev = InputDevice(path)
             caps = dev.capabilities()
             key_codes = set(caps.get(ecodes.EV_KEY, []))
-            if not trigger_keys.issubset(key_codes) or not required_keys.intersection(key_codes):
+            if not required_keys.intersection(key_codes):
                 continue
-            active = set(dev.active_keys())
+            supported_keys.update(key_codes)
+            active_keys.update(dev.active_keys())
         except Exception:
             continue
-        if not (active & ctrl_keys and active & shift_keys and active & alt_keys):
-            continue
-        if require_trigger_key and not (active & trigger_keys):
-            continue
-        return True
-    return False
+    if not trigger_keys.issubset(supported_keys):
+        return False
+    if not (active_keys & ctrl_keys and active_keys & shift_keys and active_keys & alt_keys):
+        return False
+    if require_trigger_key and not (active_keys & trigger_keys):
+        return False
+    return True
 
 
 def _is_testing_mode_hotkey(ch: int) -> bool:
@@ -832,6 +836,23 @@ def _is_testing_mode_hotkey(ch: int) -> bool:
     if ch == 27:
         return _testing_modifier_chord_active(require_trigger_key=True)
     return False
+
+
+def _getch_with_testing_mode(stdscr, poll_interval: float = 0.05) -> int | str:
+    """Wait for one key while polling the full testing-mode modifier chord."""
+    stdscr.nodelay(True)
+    try:
+        while True:
+            if _testing_modifier_chord_active(require_trigger_key=True):
+                return TESTING_MODE_SENTINEL
+            ch = stdscr.getch()
+            if ch != -1:
+                if _is_testing_mode_hotkey(ch):
+                    return TESTING_MODE_SENTINEL
+                return ch
+            time.sleep(poll_interval)
+    finally:
+        stdscr.nodelay(False)
 
 
 def _testing_mode_operator() -> dict:
@@ -1785,8 +1806,8 @@ def screen_login(stdscr, cfg: dict) -> dict:
                 center_block(stdscr, login_lines, top_offset=4)
                 draw_footer(stdscr, "ENTER continue   S switch user   Q quit")
                 stdscr.refresh()
-                ch = stdscr.getch()
-                if _is_testing_mode_hotkey(ch):
+                ch = _getch_with_testing_mode(stdscr)
+                if ch == TESTING_MODE_SENTINEL:
                     return _testing_mode_operator()
                 if ch in (10, 13, curses.KEY_ENTER):
                     screen_sync_pending(stdscr, cfg, session)
@@ -2165,8 +2186,8 @@ def _read_input_line(
     curses.curs_set(1)
     try:
         while True:
-            ch = stdscr.getch()
-            if _is_testing_mode_hotkey(ch):
+            ch = _getch_with_testing_mode(stdscr)
+            if ch == TESTING_MODE_SENTINEL:
                 return TESTING_MODE_SENTINEL
             if special_keys and ch in special_keys:
                 return special_keys[ch]

@@ -58,7 +58,10 @@ def test_hidden_testing_mode_processes_bypass_reporting_login_and_box_flow():
     assert "TESTING_MODE_CTRL_T = 20" in TUI
     assert 'TESTING_MODE_HOTKEY_LABEL = "Ctrl+Shift+Alt+T"' in TUI
     assert "def _testing_modifier_chord_active(" in TUI
-    assert "active & ctrl_keys and active & shift_keys and active & alt_keys" in TUI
+    assert "def _getch_with_testing_mode(" in TUI
+    assert "active_keys & ctrl_keys and active_keys & shift_keys and active_keys & alt_keys" in TUI
+    assert "_testing_modifier_chord_active(require_trigger_key=True)" in TUI
+    assert "ch = _getch_with_testing_mode(stdscr)" in TUI
     assert "def screen_testing_mode_menu(" in TUI
     assert '(TESTING_RESTORE_ONLY_CHOICE, "5", TESTING_RESTORE_ONLY_LABEL)' in TUI
     assert '(TESTING_QC_ONLY_CHOICE, "6", TESTING_QC_ONLY_LABEL)' in TUI

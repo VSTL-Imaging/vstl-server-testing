@@ -12,7 +12,6 @@ ineffective:
     * Computrace / Absolute LoJack  (dmidecode -t 11 — only flag if ACTIVE)
 
   Software locks  (read-only mount of Windows partition)
-    * Bitlocker drive encryption    (blkid TYPE="BitLocker" + signature)
     * Microsoft Intune enrollment   (strict enrollment-artifact probes)
     * Azure AD / Entra device join  (strict CloudAPCache/AzureAd probe)
     * Vendor MDM (Workspace ONE / AirWatch / MobileIron / Hexnode / etc.)
@@ -30,7 +29,7 @@ Design rules
 * `run_full_audit()` composes them all into the bundle the TUI will POST.
 
 Detection trust per user choice 2c:
-  - SOFTWARE locks (Bitlocker / Intune / Azure AD / vendor MDM):
+  - SOFTWARE locks (Intune / Azure AD / vendor MDM):
       auto-only — what the disk says is gospel.
   - HARDWARE locks (BIOS password / ATA security):
       auto-detect first, then manual confirm prompt in the TUI to catch
@@ -288,18 +287,14 @@ def detect_computrace() -> dict:
 
 # ---------------------------------------------------------------------------
 # Helpers — find + mount the largest Windows partition read-only.
-#   Used by Bitlocker / Intune / Azure AD / vendor MDM detectors.
+#   Used by Intune / Azure AD / vendor MDM detectors.
 # ---------------------------------------------------------------------------
-_BITLOCKER_FVE_SIG = b"-FVE-FS-"  # Offset 3 in BitLocker volume header
-
-
 def _find_windows_partitions() -> list[dict]:
     """Return list of {device, type} for partitions worth probing.
 
     Uses blkid (1 call) — output looks like::
 
         /dev/sda3: LABEL="Windows" TYPE="ntfs" ...
-        /dev/sda4: TYPE="BitLocker" ...
     """
     raw = _run(["blkid", "-o", "full"])
     parts: list[dict] = []
@@ -311,7 +306,7 @@ def _find_windows_partitions() -> list[dict]:
         if not m_type:
             continue
         ftype = m_type.group(1).lower()
-        if ftype in ("ntfs", "bitlocker"):
+        if ftype == "ntfs":
             parts.append({"device": dev.strip(), "type": ftype})
     return parts
 
@@ -326,44 +321,12 @@ def _read_signature(dev: str, length: int = 16) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# 4. Bitlocker
+# 4. Legacy BitLocker policy shim
 # ---------------------------------------------------------------------------
 def detect_bitlocker(parts: Optional[list[dict]] = None) -> dict:
-    """Bitlocker = blkid TYPE="BitLocker" OR header signature -FVE-FS-.
-
-    `parts` is an injection point for unit tests; production passes None
-    and we re-read from blkid here.
-    """
-    if parts is None:
-        if os.geteuid() != 0:
-            return _empty_result(UNKNOWN)
-        parts = _find_windows_partitions()
-
-    locked: list[str] = []
-    for p in parts:
-        if p["type"] == "bitlocker":
-            locked.append(f"{p['device']}: blkid=BitLocker")
-            continue
-        # NTFS partition — check the on-disk signature anyway. A Bitlocker
-        # volume that's been mounted RW on Linux can sometimes get reported
-        # as NTFS by blkid until a re-scan.
-        sig = _read_signature(p["device"])
-        if _BITLOCKER_FVE_SIG in sig:
-            locked.append(f"{p['device']}: header=-FVE-FS-")
-
-    if locked:
-        return {
-            "present": True,
-            "status": "ENCRYPTED",
-            "evidence": " | ".join(locked)[:300],
-            "manual_confirm_required": False,
-        }
-    return {
-        "present": False,
-        "status": "NOT_ENCRYPTED",
-        "evidence": f"Checked {len(parts)} Windows partition(s).",
-        "manual_confirm_required": False,
-    }
+    """Compatibility shim: BitLocker is no longer identified by bench policy."""
+    del parts
+    return _empty_result("NOT_CHECKED_BY_POLICY")
 
 
 # ---------------------------------------------------------------------------
@@ -674,7 +637,6 @@ LOCK_KEYS_ORDER = (
     "bios_password",
     "ata_security",
     "computrace",
-    "bitlocker",
     "intune",
     "azure_ad",
     "vendor_mdm",
@@ -684,7 +646,6 @@ LOCK_LABELS = {
     "bios_password": "BIOS Admin Password",
     "ata_security": "ATA / NVMe Drive Password",
     "computrace": "Computrace / Absolute LoJack",
-    "bitlocker": "Bitlocker Encryption",
     "intune": "Microsoft Intune",
     "azure_ad": "Azure AD / Entra Join",
     "vendor_mdm": "Vendor MDM",
@@ -715,7 +676,6 @@ def run_full_audit() -> dict:
             "bios_password": detect_bios_password(),
             "ata_security": detect_ata_security(),
             "computrace": detect_computrace(),
-            "bitlocker": detect_bitlocker(parts),
             "intune": detect_intune(mount_root),
             "azure_ad": detect_azure_ad(mount_root),
             "vendor_mdm": detect_vendor_mdm(mount_root),

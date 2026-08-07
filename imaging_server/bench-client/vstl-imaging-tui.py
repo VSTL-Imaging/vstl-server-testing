@@ -2025,7 +2025,6 @@ PHASE2A_RUNNING_STEPS = [
     ("bios_password",  "Reading SMBIOS Hardware Security…"),
     ("ata_security",   "Querying drive password state…"),
     ("computrace",     "Scanning OEM strings for Computrace…"),
-    ("bitlocker",      "Checking partitions for Bitlocker…"),
     ("intune",         "Probing for Microsoft Intune enrollment…"),
     ("azure_ad",       "Probing for Azure AD / Entra join…"),
     ("vendor_mdm",     "Probing for vendor MDM agents…"),
@@ -2071,7 +2070,6 @@ def screen_lock_audit_run(stdscr) -> dict:
             ("bios_password",  la.detect_bios_password),
             ("ata_security",   la.detect_ata_security),
             ("computrace",     la.detect_computrace),
-            ("bitlocker",      lambda: la.detect_bitlocker(parts)),
             ("intune",         lambda: la.detect_intune(mount_root)),
             ("azure_ad",       lambda: la.detect_azure_ad(mount_root)),
             ("vendor_mdm",     lambda: la.detect_vendor_mdm(mount_root)),
@@ -2284,7 +2282,7 @@ def _detected_lock_keys(audit: dict) -> set[str]:
 def _l1_can_continue_lock_audit(audit: dict) -> bool:
     """L1 can skip only MDM/join, BIOS, and drive-password findings.
 
-    BitLocker, Computrace, and other lock classes still use the strict halt
+    Computrace and any other active lock classes still use the strict halt
     path. L2 never receives this skip action.
     """
     detected = _detected_lock_keys(audit)

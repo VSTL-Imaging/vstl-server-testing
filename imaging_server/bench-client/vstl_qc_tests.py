@@ -113,6 +113,18 @@ def _audio_dmi_identity() -> str:
     return " ".join(dict.fromkeys(parts))
 
 
+def _is_hp_elitebook_640_g10(profile: str | None = None) -> bool:
+    text = profile if profile is not None else _audio_dmi_identity()
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.lower())
+    compact = normalized.replace(" ", "")
+    return (
+        ("hp" in normalized.split() or "hewlettpackard" in compact)
+        and "elitebook" in normalized
+        and re.search(r"\b640\b", normalized) is not None
+        and re.search(r"\bg10\b", normalized) is not None
+    )
+
+
 def _audio_pci_lines() -> list[str]:
     raw = _run(["lspci", "-nn"], timeout=5)
     return [
@@ -712,6 +724,8 @@ def typec_ports() -> list[str]:
                 fallback_markers.append(path)
     if fallback_markers and not ports:
         ports.add("port0")
+    if not ports and _is_hp_elitebook_640_g10():
+        ports.add("port0")
     return sorted(ports)
 
 
@@ -1104,6 +1118,8 @@ def usb_physical_port_kind(port_key: str) -> str:
         marker in joined
         for marker in ("typec", "type-c", "usb-c", "ucsi", "thunderbolt")
     ):
+        return "usb_c"
+    if _is_hp_elitebook_640_g10() and re.search(r"(?:pci-|/)0000:00:0d\.", joined):
         return "usb_c"
     return "usb_a"
 

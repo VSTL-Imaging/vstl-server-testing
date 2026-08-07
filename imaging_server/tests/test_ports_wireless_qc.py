@@ -394,6 +394,7 @@ def test_usb_physical_port_kind_defaults_ordinary_usb_path_to_type_a(monkeypatch
         "_run",
         lambda argv, timeout=5: "ID_PATH=pci-0000:00:14.0-usb-0:2:1.0\n",
     )
+    monkeypatch.setattr(qc, "_audio_dmi_identity", lambda: "HP EliteBook 640 G9")
     monkeypatch.setattr(os.path, "lexists", lambda path: False)
     monkeypatch.setattr(
         os.path,
@@ -401,6 +402,27 @@ def test_usb_physical_port_kind_defaults_ordinary_usb_path_to_type_a(monkeypatch
         lambda path: "/devices/pci0000:00/usb1/1-2",
     )
     assert qc.usb_physical_port_kind("1-2") == "usb_a"
+
+
+def test_usb_physical_port_kind_maps_hp_640_g10_typec_controller(monkeypatch):
+    monkeypatch.setattr(
+        qc,
+        "_run",
+        lambda argv, timeout=5: "ID_PATH=pci-0000:00:0d.0-usb-0:2:1.0\n",
+    )
+    monkeypatch.setattr(
+        qc,
+        "_audio_dmi_identity",
+        lambda: "HP HP EliteBook 640 14 inch G10 Notebook PC",
+    )
+    monkeypatch.setattr(os.path, "lexists", lambda path: False)
+    monkeypatch.setattr(
+        os.path,
+        "realpath",
+        lambda path: "/devices/pci0000:00/0000:00:0d.0/usb1/1-2",
+    )
+
+    assert qc.usb_physical_port_kind("1-2") == "usb_c"
 
 
 def test_ports_matrix_uses_connector_classification_not_first_remaining_row():
@@ -450,6 +472,26 @@ def test_typec_ports_falls_back_to_platform_ucsi_and_thunderbolt_nodes(monkeypat
     monkeypatch.setattr(os, "listdir", fake_listdir)
     monkeypatch.setattr(qc.glob, "glob", fake_glob)
     monkeypatch.setattr(os.path, "realpath", lambda path: str(path))
+
+    assert qc.typec_ports() == ["port0"]
+
+
+def test_typec_ports_adds_hp_640_g10_minimum_when_kernel_hides_typec(monkeypatch):
+    original_listdir = os.listdir
+
+    def fake_listdir(path):
+        if path in ("/sys/class/typec", "/sys/class/usb_role", "/sys/class/dual_role_usb"):
+            raise OSError
+        return original_listdir(path)
+
+    monkeypatch.setattr(os, "listdir", fake_listdir)
+    monkeypatch.setattr(qc.glob, "glob", lambda pattern: [])
+    monkeypatch.setattr(os.path, "realpath", lambda path: str(path))
+    monkeypatch.setattr(
+        qc,
+        "_audio_dmi_identity",
+        lambda: "HP HP EliteBook 640 14 inch G10 Notebook PC",
+    )
 
     assert qc.typec_ports() == ["port0"]
 

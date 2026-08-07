@@ -59,3 +59,13 @@ def test_agent_and_cloud_cache_paths_require_content(tmp_path):
 
     assert la.detect_intune(str(tmp_path))["present"] is True
     assert la.detect_azure_ad(str(tmp_path))["present"] is True
+
+
+def test_bitlocker_is_not_part_of_active_bench_lock_policy():
+    assert "bitlocker" not in la.LOCK_KEYS_ORDER
+    assert "bitlocker" not in la.LOCK_LABELS
+
+    result = la.detect_bitlocker([{"device": "/dev/sda4", "type": "bitlocker"}])
+
+    assert result["present"] is False
+    assert result["status"] == "NOT_CHECKED_BY_POLICY"

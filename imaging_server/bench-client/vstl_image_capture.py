@@ -949,7 +949,7 @@ def validate_capture_readiness(
         issues.append("SKU/Unit Part Number not detected. Cannot store captured image.")
 
     audit_locks = set((lock_audit or {}).get("detected_locks") or [])
-    blocking_locks = audit_locks.intersection({"bitlocker", "intune", "azure_ad", "vendor_mdm", "bios_password", "drive_password"})
+    blocking_locks = audit_locks.intersection({"intune", "azure_ad", "vendor_mdm", "bios_password", "drive_password"})
     if blocking_locks:
         issues.append("Lock/MDM/encryption signal still present: " + ", ".join(sorted(blocking_locks)))
 

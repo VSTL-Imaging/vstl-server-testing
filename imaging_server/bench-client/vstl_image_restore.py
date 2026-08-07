@@ -262,7 +262,7 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
     image_dir = image_dir or os.path.join(_NFS_MOUNT_POINT, image_subdir)
     cmd = [
         "ocs-sr", "-batch", "--nogui", "-or", _NFS_MOUNT_POINT,
-        "-g", "auto", "-e1", "auto", "-e2", "-r",
+        "-g", "auto", "-e1", "auto", "-e2", "-k1", "-r",
         "-icds", "-j2", "-p", "true",
         "restoredisk", image_subdir, dev_name,
     ]
@@ -361,20 +361,80 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
     )
     return rc_value == 0, ev
 
+
+_MAX_ALLOWED_TRAILING_FREE_BYTES = 1024 * 1024 * 1024
+
+
+def _logical_sector_size(device: str) -> int:
+    rc, out, _err = _run(["blockdev", "--getss", device], timeout=10)
+    if rc == 0:
+        try:
+            value = int(out.strip())
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return 512
+
+
+def _trailing_free_bytes(device: str) -> tuple[int | None, str]:
+    """Return usable free bytes after the last partition, if sfdisk can tell."""
+    rc, out, err = _run(["sfdisk", "-J", device], timeout=20)
+    if rc != 0:
+        return None, f"sfdisk free-space check unavailable: rc={rc} {err[:200]}"
+    try:
+        data = json.loads(out)
+        table = data.get("partitiontable") or {}
+        partitions = table.get("partitions") or []
+        last_lba = int(table.get("lastlba") or 0)
+        highest_end = max(
+            int(part.get("start") or 0) + int(part.get("size") or 0) - 1
+            for part in partitions
+            if int(part.get("size") or 0) > 0
+        )
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None, f"sfdisk free-space check parse failed: {out[:240]}"
+    free_sectors = max(0, last_lba - highest_end)
+    free_bytes = free_sectors * _logical_sector_size(device)
+    return free_bytes, f"trailing_free_bytes={free_bytes}"
+
+
 def _verify_restore(device: str) -> tuple[bool, str]:
     """Run ``partprobe`` + ``lsblk`` after the restore and confirm a fresh
     partition table is visible. This isn't cryptographic verification â€”
     Clonezilla's own partclone phase verifies block hashes â€” but it gives
     the operator a quick visual sanity check on the result.
     """
+    # A smaller GPT image restored to a larger drive can leave the backup GPT
+    # header at the old end of disk. Repair that before checking usable space.
+    _run(["sgdisk", "-e", device], timeout=30)
     _run(["partprobe", device], timeout=10)
+    _run(["udevadm", "settle"], timeout=10)
     rc, out, err = _run(
         ["lsblk", "-no", "NAME,SIZE,TYPE,FSTYPE,LABEL", device], timeout=10,
     )
     if rc != 0:
         return False, f"lsblk rc={rc} err={err[:200]}"
     has_part = any(line.split() and "part" in line.split() for line in out.splitlines())
-    return has_part, out[:2000]
+    evidence = [out[:2000]]
+    if not has_part:
+        evidence.append("no restored partitions detected")
+        return False, "\n".join(evidence)
+
+    layout = validate_partition_layout(device)
+    if not layout.get("ok", False):
+        evidence.append("layout issue: " + "; ".join(layout.get("issues") or []))
+        return False, "\n".join(evidence)[:2000]
+
+    trailing_free, free_ev = _trailing_free_bytes(device)
+    evidence.append(free_ev)
+    if trailing_free is not None and trailing_free > _MAX_ALLOWED_TRAILING_FREE_BYTES:
+        evidence.append(
+            "restore left too much unallocated space after the last partition; "
+            "destination layout was not expanded to disk size"
+        )
+        return False, "\n".join(evidence)[:2000]
+    return True, "\n".join(evidence)[:2000]
 
 
 _WINDOWS_RW_MOUNT_POINT = "/mnt/vstl-restored-windows"
@@ -672,10 +732,19 @@ def run_restore(
         }
 
     verified, verify_ev = _verify_restore(device)
-    firmware_trigger = install_post_restore_firmware_trigger(device)
+    restore_ok = bool(verified)
+    firmware_trigger = (
+        install_post_restore_firmware_trigger(device)
+        if restore_ok else
+        {
+            "ok": False,
+            "installed": False,
+            "evidence": "skipped because post-restore partition layout verification failed",
+        }
+    )
     return {
-        "ok": True,
-        "result": "SUCCESS",
+        "ok": restore_ok,
+        "result": "SUCCESS" if restore_ok else "FAIL",
         "image_name": image_name,
         "image_subdir": image_subdir,
         "golden_copy_id": golden_copy_id,
@@ -698,5 +767,5 @@ def run_restore(
                 "$ post-restore firmware/driver trigger\n" + firmware_trigger.get("evidence", ""),
             ])
         )[:_EVIDENCE_CAP],
-        "error_message": "",
+        "error_message": "" if restore_ok else "post-restore partition layout verification failed",
     }

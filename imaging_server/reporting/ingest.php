@@ -38,7 +38,42 @@ function vstl_text($value): string {
     return trim((string)$value);
 }
 
-function vstl_wipe_standard(string $method): string {
+function vstl_clear_wipe_standard(string $method): string {
+    $standards = [
+        'NVMe_FORMAT_USER_DATA' => 'NIST SP 800-88 Clear',
+        'NVMe_SECURE_DISCARD_CLEAR' => 'NIST SP 800-88 Clear',
+        'NVMe_SOFTWARE_ZERO_CLEAR' => 'NIST SP 800-88 Clear',
+        'BLKDISCARD' => 'NIST SP 800-88 Clear',
+    ];
+    return $standards[$method] ?? '';
+}
+
+function vstl_is_hp_elitebook_640_g10_payload(array $payload): bool {
+    $text = strtolower(trim(
+        vstl_text($payload['brand'] ?? '') . ' ' .
+        vstl_text($payload['model'] ?? '') . ' ' .
+        vstl_text($payload['model_label'] ?? '')
+    ));
+    $normalized = preg_replace('/[^a-z0-9]+/', ' ', $text) ?? '';
+    $compact = str_replace(' ', '', $normalized);
+    return (
+        (preg_match('/\bhp\b/', $normalized) || strpos($compact, 'hewlettpackard') !== false) &&
+        strpos($normalized, 'elitebook') !== false &&
+        preg_match('/\b640\b/', $normalized) &&
+        preg_match('/\bg10\b/', $normalized)
+    );
+}
+
+function vstl_clear_exception_allowed(array $payload, array $erase): bool {
+    $method = vstl_text($erase['method'] ?? $erase['wipe_method'] ?? '');
+    return (
+        ($erase['clear_only_exception'] ?? false) === true &&
+        vstl_clear_wipe_standard($method) !== '' &&
+        vstl_is_hp_elitebook_640_g10_payload($payload)
+    );
+}
+
+function vstl_wipe_standard(string $method, bool $allowClearException = false): string {
     $standards = [
         'NVMe_SANITIZE_BLOCK_ERASE' => 'NIST SP 800-88 Purge',
         'NVMe_SANITIZE_CRYPTO_ERASE' => 'NIST SP 800-88 Purge',
@@ -50,11 +85,17 @@ function vstl_wipe_standard(string $method): string {
         'ATA_SECURITY_ERASE' => 'NIST SP 800-88 Purge',
         'NWIPE_DOD_3PASS' => 'DoD 5220.22-M 3-pass',
     ];
-    return $standards[$method] ?? '';
+    if (isset($standards[$method])) {
+        return $standards[$method];
+    }
+    if ($allowClearException) {
+        return vstl_clear_wipe_standard($method);
+    }
+    return '';
 }
 
-function vstl_is_certifiable_wipe_method(string $method): bool {
-    return vstl_wipe_standard($method) !== '';
+function vstl_is_certifiable_wipe_method(string $method, bool $allowClearException = false): bool {
+    return vstl_wipe_standard($method, $allowClearException) !== '';
 }
 
 function vstl_sort_recursive($value) {
@@ -104,11 +145,12 @@ function vstl_issue_local_secure_erase_certificate(array &$payload): bool {
     }
 
     $method = vstl_text($erase['method'] ?? '');
-    $standard = vstl_wipe_standard($method);
-    if (!vstl_is_certifiable_wipe_method($method)) {
+    $allowClearException = vstl_clear_exception_allowed($payload, $erase);
+    $standard = vstl_wipe_standard($method, $allowClearException);
+    if (!vstl_is_certifiable_wipe_method($method, $allowClearException)) {
         $erase['wipe_standard'] = 'Unsupported data sanitization method';
         $erase['certificate_status'] = 'refused';
-        $erase['certificate_error'] = 'Clear-class and unknown wipe methods are disabled. Only approved purge-class methods can issue a certificate or authorize capture.';
+        $erase['certificate_error'] = 'Clear-class and unknown wipe methods are disabled. Only approved purge-class methods can issue a certificate or authorize capture, except the temporary HP EliteBook 640 G10 Clear-only exception.';
         $erase['capture_gate_recorded'] = false;
         return false;
     }

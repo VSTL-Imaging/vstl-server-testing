@@ -441,7 +441,20 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
     log "WIPE requested — running secure erase on $PRIMARY_DISK"
     WIPE_START=$(date -Iseconds)
     # Clear-class helpers are allowed only as a destructive assist between
-    # failed direct purge and the required final purge retry.
+    # failed direct purge and the required final purge retry, except the
+    # temporary HP EliteBook 640 G10 clear-only exception.
+    DMI_PROFILE="$(
+        cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name \
+            /sys/class/dmi/id/product_version 2>/dev/null || true
+    )"
+    HP_640_G10_CLEAR_ONLY=0
+    if echo "$DMI_PROFILE" | grep -Eiq 'hp|hewlett' \
+        && echo "$DMI_PROFILE" | grep -Eiq 'elitebook' \
+        && echo "$DMI_PROFILE" | grep -Eiq '\b640\b' \
+        && echo "$DMI_PROFILE" | grep -Eiq '\bg10\b'; then
+        HP_640_G10_CLEAR_ONLY=1
+    fi
+    WIPE_STANDARD="NIST 800-88 Purge"
     if [[ "$PRIMARY_DISK" =~ nvme ]]; then
         NVME_CONTROLLER="/dev/$(basename "$PRIMARY_DISK" | sed -E 's/n[0-9]+$//')"
         NVME_NSID="$(cat "/sys/block/$(basename "$PRIMARY_DISK")/nsid" 2>/dev/null || echo 1)"
@@ -464,13 +477,21 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
                 log "FATAL: NVMe Clear assist failed; final Purge retry cannot be trusted"
                 exit 7
             fi
-            log "NVMe Clear assist completed; retrying required final Purge"
-            if ! nvme_purge_crypto; then
-                log "FATAL: final NVMe Purge retry failed after Clear assist"
-                exit 7
+            if [[ "$HP_640_G10_CLEAR_ONLY" == "1" ]]; then
+                log "NVMe Clear assist completed; HP EliteBook 640 G10 temporary clear-only policy allows completion"
+                METHOD="NVMe Clear Erase (HP EliteBook 640 G10 temporary exception)"
+                WIPE_STANDARD="NIST 800-88 Clear"
+            else
+                log "NVMe Clear assist completed; retrying required final Purge"
+                if ! nvme_purge_crypto; then
+                    log "FATAL: final NVMe Purge retry failed after Clear assist"
+                    exit 7
+                fi
+                METHOD="NVMe Format Crypto Erase"
             fi
+        else
+            METHOD="NVMe Format Crypto Erase"
         fi
-        METHOD="NVMe Format Crypto Erase"
     else
         ERASE_PASSWORD="vstl"
         ata_purge() {
@@ -486,16 +507,24 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
                 log "FATAL: ATA Clear assist failed; final Purge retry cannot be trusted"
                 exit 7
             fi
-            if ! ata_purge; then
-                log "FATAL: final ATA Purge retry failed after Clear assist"
-                exit 7
+            if [[ "$HP_640_G10_CLEAR_ONLY" == "1" ]]; then
+                log "BLKDISCARD Clear assist completed; HP EliteBook 640 G10 temporary clear-only policy allows completion"
+                METHOD="BLKDISCARD Clear (HP EliteBook 640 G10 temporary exception)"
+                WIPE_STANDARD="NIST 800-88 Clear"
+            else
+                if ! ata_purge; then
+                    log "FATAL: final ATA Purge retry failed after Clear assist"
+                    exit 7
+                fi
+                METHOD="ATA Security Erase Enhanced"
             fi
+        else
+            METHOD="ATA Security Erase Enhanced"
         fi
-        METHOD="ATA Security Erase Enhanced"
     fi
     WIPE_END=$(date -Iseconds)
     WIPE_INFO_JSON=$(jq -nc \
-        --arg method "$METHOD" --arg standard "NIST 800-88 Purge" --argjson passes 1 \
+        --arg method "$METHOD" --arg standard "$WIPE_STANDARD" --argjson passes 1 \
         --arg started "$WIPE_START" --arg completed "$WIPE_END" --argjson verified true \
         '{method:$method, standard:$standard, passes:$passes, started_at:$started, completed_at:$completed, verified:$verified}')
 fi

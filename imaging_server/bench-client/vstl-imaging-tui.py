@@ -67,11 +67,18 @@ _WIPE_METHOD_STANDARDS = {
     "ATA_SECURITY_ERASE": "NIST SP 800-88 Purge",
     "NWIPE_DOD_3PASS": "DoD 5220.22-M 3-pass",
 }
+_CLEAR_WIPE_METHOD_STANDARDS = {
+    "NVMe_FORMAT_USER_DATA": "NIST SP 800-88 Clear",
+    "NVMe_SECURE_DISCARD_CLEAR": "NIST SP 800-88 Clear",
+    "NVMe_SOFTWARE_ZERO_CLEAR": "NIST SP 800-88 Clear",
+    "BLKDISCARD": "NIST SP 800-88 Clear",
+}
 
 _UNSUPPORTED_WIPE_STANDARD = "Unsupported data sanitization method"
 _UNSUPPORTED_WIPE_MESSAGE = (
     "Clear-class and unknown wipe methods are disabled. "
-    "Only approved purge-class methods can issue a certificate or authorize capture."
+    "Only approved purge-class methods can issue a certificate or authorize capture, "
+    "except the temporary HP EliteBook 640 G10 Clear-only exception."
 )
 
 TESTING_MODE_CTRL_T = 20
@@ -7126,6 +7133,8 @@ def _post_secure_erase_local_report(
             "method": result.get("method", ""),
             "wipe_method": result.get("method", ""),
             "wipe_standard": certificate.get("wipe_standard", ""),
+            "clear_only_exception": bool(result.get("clear_only_exception")),
+            "clear_only_exception_reason": result.get("clear_only_exception_reason", ""),
             "device": result.get("device", ""),
             "device_model": result.get("device_model", ""),
             "duration_sec": result.get("duration_sec", 0),
@@ -7242,12 +7251,53 @@ def _compact_api_error(body: dict, raw_err: str) -> str:
     return combined[:300] if combined else raw_err[:300]
 
 
-def _wipe_standard(method: str) -> str:
-    return _WIPE_METHOD_STANDARDS.get((method or "").strip(), _UNSUPPORTED_WIPE_STANDARD)
+def _is_hp_elitebook_640_g10_identity(ident: dict | None) -> bool:
+    text = " ".join(
+        str((ident or {}).get(key) or "")
+        for key in ("brand", "model", "model_label", "product_name")
+    )
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.lower())
+    compact = normalized.replace(" ", "")
+    return (
+        ("hp" in normalized.split() or "hewlettpackard" in compact)
+        and "elitebook" in normalized
+        and re.search(r"\b640\b", normalized) is not None
+        and re.search(r"\bg10\b", normalized) is not None
+    )
 
 
-def _is_certifiable_wipe_method(method: str) -> bool:
-    return (method or "").strip() in _WIPE_METHOD_STANDARDS
+def _clear_exception_allowed(result: dict | None, ident: dict | None) -> bool:
+    method = str((result or {}).get("method") or "").strip()
+    return (
+        bool((result or {}).get("clear_only_exception"))
+        and method in _CLEAR_WIPE_METHOD_STANDARDS
+        and _is_hp_elitebook_640_g10_identity(ident)
+    )
+
+
+def _wipe_standard(method: str, allow_clear_exception: bool = False) -> str:
+    method = (method or "").strip()
+    if method in _WIPE_METHOD_STANDARDS:
+        return _WIPE_METHOD_STANDARDS[method]
+    if allow_clear_exception and method in _CLEAR_WIPE_METHOD_STANDARDS:
+        return _CLEAR_WIPE_METHOD_STANDARDS[method]
+    return _UNSUPPORTED_WIPE_STANDARD
+
+
+def _is_certifiable_wipe_method(method: str, allow_clear_exception: bool = False) -> bool:
+    method = (method or "").strip()
+    return (
+        method in _WIPE_METHOD_STANDARDS
+        or (allow_clear_exception and method in _CLEAR_WIPE_METHOD_STANDARDS)
+    )
+
+
+def _is_certifiable_wipe_result(result: dict | None, ident: dict | None) -> bool:
+    method = str((result or {}).get("method") or "").strip()
+    return _is_certifiable_wipe_method(
+        method,
+        allow_clear_exception=_clear_exception_allowed(result, ident),
+    )
 
 
 def _cloud_certificate_compat_wipe_method(method: str) -> str:
@@ -7285,7 +7335,8 @@ def _local_secure_erase_certificate(
     leave a local certificate ID in the report and NFS authorization record.
     """
     method = str(result.get("method") or "")
-    if not _is_certifiable_wipe_method(method):
+    allow_clear_exception = _clear_exception_allowed(result, ident)
+    if not _is_certifiable_wipe_method(method, allow_clear_exception):
         raise ValueError(_UNSUPPORTED_WIPE_MESSAGE)
     evidence = str(result.get("evidence") or "")
     basis = {
@@ -7303,7 +7354,7 @@ def _local_secure_erase_certificate(
         "device_size_bytes": int(drive.get("device_size_bytes") or 0),
         "device_size_gb": result.get("device_size_gb") or drive.get("device_size_gb") or 0,
         "wipe_method": method,
-        "wipe_standard": _wipe_standard(method),
+        "wipe_standard": _wipe_standard(method, allow_clear_exception),
         "wipe_passes": int(result.get("passes") or 0),
         "wipe_started_at": str(result.get("started_at") or ""),
         "wipe_completed_at": str(result.get("completed_at") or ""),
@@ -7311,6 +7362,8 @@ def _local_secure_erase_certificate(
         "wipe_verified": bool(result.get("verified")),
         "verification_method": str(result.get("verification_method") or ""),
         "technician_level": str(tech or ""),
+        "clear_only_exception": bool(result.get("clear_only_exception")),
+        "clear_only_exception_reason": str(result.get("clear_only_exception_reason") or ""),
         "evidence_sha256": hashlib.sha256(evidence.encode("utf-8")).hexdigest(),
     }
     verification_hash = _hash_json(basis)
@@ -8480,7 +8533,8 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
     if not screen_erase_intro(stdscr, drive):
         return None  # cancelled
     result = screen_run_erase(stdscr, drive)
-    if result.get("ok") and not _is_certifiable_wipe_method(str(result.get("method") or "")):
+    allow_clear_exception = _clear_exception_allowed(result, ident)
+    if result.get("ok") and not _is_certifiable_wipe_result(result, ident):
         refused_method = str(result.get("method") or "UNKNOWN").strip() or "UNKNOWN"
         refusal = f"Unsupported wipe method {refused_method}: {_UNSUPPORTED_WIPE_MESSAGE}"
         result = dict(result)
@@ -8499,7 +8553,10 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
     cert_ok = False
     if suppress_reporting and result.get("ok"):
         cert_resp = {
-            "wipe_standard": _wipe_standard(str(result.get("method") or "")),
+            "wipe_standard": _wipe_standard(
+                str(result.get("method") or ""),
+                allow_clear_exception,
+            ),
             "certificate_status": "testing_mode_suppressed",
             "remote_post_ok": False,
             "remote_error": "testing mode suppressed",
@@ -8523,6 +8580,8 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
             "wipe_method":        result.get("method", ""),
             "wipe_passes":        result.get("passes", 1),
             "wipe_standard":      local_cert.get("wipe_standard", ""),
+            "clear_only_exception": bool(result.get("clear_only_exception")),
+            "clear_only_exception_reason": result.get("clear_only_exception_reason", ""),
             "wipe_started_at":    result.get("started_at", ""),
             "wipe_completed_at":  result.get("completed_at", ""),
             "wipe_verified":      result.get("verified", False),
@@ -9389,6 +9448,8 @@ def run(stdscr) -> int:
                 "secure_erase_reg_id": (v.get("certificate") or {}).get("certificate_id", "") if k == "erase" else "",
                 "verification_hash": (v.get("certificate") or {}).get("verification_hash", "") if k == "erase" else "",
                 "wipe_standard": (v.get("certificate") or {}).get("wipe_standard", "") if k == "erase" else "",
+                "clear_only_exception": (v.get("result") or {}).get("clear_only_exception", False) if k == "erase" else False,
+                "clear_only_exception_reason": (v.get("result") or {}).get("clear_only_exception_reason", "") if k == "erase" else "",
                 "certificate_status": (v.get("certificate") or {}).get("certificate_status", "") if k == "erase" else "",
                 "remote_post_ok": (v.get("certificate") or {}).get("remote_post_ok", False) if k == "erase" else False,
                 "remote_error": (v.get("certificate") or {}).get("remote_error", "") if k == "erase" else "",

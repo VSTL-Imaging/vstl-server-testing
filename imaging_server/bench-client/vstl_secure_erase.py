@@ -63,6 +63,15 @@ _NVME_CLEAR_ASSIST_METHODS = (
     "NVMe_SOFTWARE_ZERO_CLEAR",
 )
 _SATA_CLEAR_ASSIST_METHODS = ("BLKDISCARD",)
+_CLEAR_METHOD_STANDARDS = {
+    "NVMe_FORMAT_USER_DATA": "NIST SP 800-88 Clear",
+    "NVMe_SECURE_DISCARD_CLEAR": "NIST SP 800-88 Clear",
+    "NVMe_SOFTWARE_ZERO_CLEAR": "NIST SP 800-88 Clear",
+    "BLKDISCARD": "NIST SP 800-88 Clear",
+}
+_HP_640_G10_CLEAR_EXCEPTION = (
+    "temporary HP EliteBook 640 G10 clear-only policy"
+)
 _NVME_SANITIZE_ACTION_LABELS = {
     2: "NVMe_SANITIZE_BLOCK_ERASE",
     3: "NVMe_SANITIZE_OVERWRITE",
@@ -127,6 +136,17 @@ def _is_legacy_dell_platform(profile: str | None = None) -> bool:
         return True
     model_numbers = [int(match) for match in re.findall(r"\b(\d{4})\b", normalized)]
     return any(number < 5500 for number in model_numbers)
+
+
+def _is_hp_elitebook_640_g10(profile: str | None = None) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", " ", (profile or _system_dmi_profile()).lower())
+    compact = normalized.replace(" ", "")
+    return (
+        ("hp" in normalized.split() or "hewlettpackard" in compact)
+        and "elitebook" in normalized
+        and re.search(r"\b640\b", normalized) is not None
+        and re.search(r"\bg10\b", normalized) is not None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1229,6 +1249,9 @@ def run_secure_erase(
     method = ""
     ok = False
     tried: list[str] = []
+    clear_only_exception = False
+    clear_only_exception_reason = ""
+    hp_640_g10_clear_allowed = _is_hp_elitebook_640_g10()
 
     if dtype == "NVMe":
         release_ev = _release_block_device(device)
@@ -1247,21 +1270,32 @@ def run_secure_erase(
             )
             evidence_blocks.append("[NVMe Clear assist]\n" + clear_ev)
             if clear_ok:
-                evidence_blocks.append(
-                    f"Clear assist completed using {clear_method}; final NVMe "
-                    "Purge retry is required before certification."
-                )
-                evidence_blocks.append(
-                    "[post-clear device release]\n" + _release_block_device(device)
-                )
-                ok, method = _run_nvme_purge_sequence(
-                    device, evidence_blocks, tried, progress_callback, "post-clear",
-                )
-                if not ok:
+                if hp_640_g10_clear_allowed:
+                    ok = True
+                    method = clear_method
+                    clear_only_exception = True
+                    clear_only_exception_reason = _HP_640_G10_CLEAR_EXCEPTION
                     evidence_blocks.append(
-                        "Clear assist completed; final NVMe Purge retry still "
-                        "failed. Certification remains blocked."
+                        f"Clear assist completed using {clear_method}; final NVMe "
+                        "Purge retry skipped by temporary HP EliteBook 640 G10 "
+                        "clear-only policy."
                     )
+                else:
+                    evidence_blocks.append(
+                        f"Clear assist completed using {clear_method}; final NVMe "
+                        "Purge retry is required before certification."
+                    )
+                    evidence_blocks.append(
+                        "[post-clear device release]\n" + _release_block_device(device)
+                    )
+                    ok, method = _run_nvme_purge_sequence(
+                        device, evidence_blocks, tried, progress_callback, "post-clear",
+                    )
+                    if not ok:
+                        evidence_blocks.append(
+                            "Clear assist completed; final NVMe Purge retry still "
+                            "failed. Certification remains blocked."
+                        )
             else:
                 evidence_blocks.append(
                     f"Clear assist failed before final NVMe Purge retry; tried "
@@ -1281,18 +1315,29 @@ def run_secure_erase(
             clear_ok, clear_method, clear_ev = _run_sata_clear_assist(device)
             evidence_blocks.append("[SATA SSD Clear assist]\n" + clear_ev)
             if clear_ok:
-                evidence_blocks.append(
-                    f"Clear assist completed using {clear_method}; final SATA "
-                    "SSD Purge retry is required before certification."
-                )
-                ok, method = _run_sata_purge_sequence(
-                    device, evidence_blocks, tried, progress_callback, "post-clear",
-                )
-                if not ok:
+                if hp_640_g10_clear_allowed:
+                    ok = True
+                    method = clear_method
+                    clear_only_exception = True
+                    clear_only_exception_reason = _HP_640_G10_CLEAR_EXCEPTION
                     evidence_blocks.append(
-                        "Clear assist completed; final SATA SSD Purge retry still "
-                        "failed. Certification remains blocked."
+                        f"Clear assist completed using {clear_method}; final SATA "
+                        "SSD Purge retry skipped by temporary HP EliteBook 640 G10 "
+                        "clear-only policy."
                     )
+                else:
+                    evidence_blocks.append(
+                        f"Clear assist completed using {clear_method}; final SATA "
+                        "SSD Purge retry is required before certification."
+                    )
+                    ok, method = _run_sata_purge_sequence(
+                        device, evidence_blocks, tried, progress_callback, "post-clear",
+                    )
+                    if not ok:
+                        evidence_blocks.append(
+                            "Clear assist completed; final SATA SSD Purge retry still "
+                            "failed. Certification remains blocked."
+                        )
             else:
                 evidence_blocks.append(
                     f"Clear assist failed before final SATA SSD Purge retry; tried "
@@ -1344,11 +1389,16 @@ def run_secure_erase(
     verified, verify_ev = _verify_wipe_sample(device)
     evidence_blocks.append(f"$ verify-sample\n{verify_ev}")
     passes = 3 if method == "NWIPE_DOD_3PASS" else 1
+    standard = (
+        _CLEAR_METHOD_STANDARDS.get(method, "")
+        if clear_only_exception
+        else ""
+    )
 
     return {
         "ok": True,
         "method": method,
-        "standard": "",  # backend fills this in from _WIPE_METHOD_STANDARD
+        "standard": standard,  # backend fills purge standards; clear exception sets this here.
         "passes": passes,
         "started_at": started_at,
         "completed_at": completed_at,
@@ -1361,4 +1411,6 @@ def run_secure_erase(
         "verification_method": "post_wipe_read_sample",
         "evidence": _cap_evidence("\n---\n".join(evidence_blocks)),
         "error_message": "",
+        "clear_only_exception": clear_only_exception,
+        "clear_only_exception_reason": clear_only_exception_reason,
     }

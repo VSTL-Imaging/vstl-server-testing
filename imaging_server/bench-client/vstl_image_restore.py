@@ -1,4 +1,4 @@
-﻿"""
+"""
 vstl_image_restore.py â€” Phase 3 Restore Approved System Image
 ==============================================================
 Looks up the golden copy for the SUT's detected model + part-number,

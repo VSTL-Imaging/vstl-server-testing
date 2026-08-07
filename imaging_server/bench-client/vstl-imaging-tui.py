@@ -418,7 +418,7 @@ def load_config() -> dict:
               "VSTL_AUTO_SHUTDOWN", "VSTL_BURN_DURATION_SEC",
               "VSTL_BURN_THROTTLE_C", "VSTL_RELEASE_DHCP_ON_AUDIT_SUBMITTED",
               "VSTL_DHCP_RELEASE_IFACE", "VSTL_DHCP_RELEASE_IFACE_FILE",
-              "VSTL_DHCP_RELEASE_LOG_FILE"):
+              "VSTL_DHCP_RELEASE_LOG_FILE", "VSTL_SHARE_OPERATOR_SESSION"):
         if os.environ.get(k):
             cfg[k] = os.environ[k]
     return cfg
@@ -443,6 +443,20 @@ def _bench_id(cfg: dict) -> str:
 def _safe_state_key(value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip("-")
     return (safe or "client")[:128]
+
+
+def _truthy_config(cfg: dict | None, key: str, default: bool = False) -> bool:
+    if cfg is None:
+        return default
+    value = cfg.get(key)
+    if value is None or str(value).strip() == "":
+        return default
+    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _shared_operator_session_enabled(cfg: dict | None) -> bool:
+    """Opt-in only: never share the active operator login between PXE clients."""
+    return _truthy_config(cfg, "VSTL_SHARE_OPERATOR_SESSION", default=False)
 
 
 def _read_first_existing(paths: list[str]) -> str:
@@ -662,7 +676,7 @@ def _load_auth_session(cfg: dict | None = None) -> dict:
     local = _load_local_auth_session()
     if local:
         return local
-    if cfg:
+    if cfg and _shared_operator_session_enabled(cfg):
         ok, data, _msg = _bench_state_request(cfg, "GET", "session")
         session = data.get("session") if ok else None
         if isinstance(session, dict) and session.get("token"):
@@ -686,7 +700,7 @@ def _save_auth_session(session: dict, cfg: dict | None = None) -> None:
     stored_session = dict(session or {})
     stored_session["bench_client_id"] = _bench_client_id()
     _save_local_auth_session(stored_session)
-    if cfg:
+    if cfg and _shared_operator_session_enabled(cfg):
         _bench_state_request(
             cfg,
             "POST",
@@ -704,7 +718,7 @@ def _clear_auth_session(cfg: dict | None = None) -> None:
         os.unlink(_auth_session_path())
     except OSError:
         pass
-    if cfg:
+    if cfg and _shared_operator_session_enabled(cfg):
         _bench_state_request(cfg, "DELETE", "session")
 
 
@@ -1785,7 +1799,7 @@ def screen_login(stdscr, cfg: dict) -> dict:
             stdscr,
             7,
             6,
-            "PIN login is once per shift; the bench reuses the 72-hour VSTL 360 session.",
+            "Login is kept on this laptop only; nearby benches must sign in separately.",
             curses.color_pair(DIM_PAIR),
         )
         if last_error:

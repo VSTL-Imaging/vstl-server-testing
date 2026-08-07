@@ -47,7 +47,7 @@ def test_login_controls_layer_before_bench_screen_access():
     assert "Login is required before VSTL Bench access." in TUI
     assert "Enter your 4-digit Imaging PIN:" in TUI
     assert "PIN must be exactly 4 digits" in TUI
-    assert "PIN login is once per shift" in TUI
+    assert "Login is kept on this laptop only" in TUI
     assert "L1 and L2 users may select either L1 or L2." in TUI
     assert "there is no local override" not in TUI
     technician_fn = TUI[TUI.index("def screen_technician("):TUI.index("MENU_OPTIONS =")]
@@ -167,12 +167,28 @@ def test_logged_in_user_is_attached_to_payload_and_reports():
     assert 'payload.get("technician_user_name")' in EXPORTER
 
 
-def test_shift_session_is_cached_on_the_imaging_server():
+def test_operator_session_cache_is_local_only_by_default():
+    ns = load_tui_functions("_truthy_config", "_shared_operator_session_enabled")
+    assert ns["_shared_operator_session_enabled"]({}) is False
+    assert ns["_shared_operator_session_enabled"]({"VSTL_SHARE_OPERATOR_SESSION": ""}) is False
+    assert ns["_shared_operator_session_enabled"]({"VSTL_SHARE_OPERATOR_SESSION": "0"}) is False
+    assert ns["_shared_operator_session_enabled"]({"VSTL_SHARE_OPERATOR_SESSION": "1"}) is True
+
+    load_fn = TUI[TUI.index("def _load_auth_session("):TUI.index("def _save_local_auth_session(")]
+    save_fn = TUI[TUI.index("def _save_auth_session("):TUI.index("def _clear_auth_session(")]
+    clear_fn = TUI[TUI.index("def _clear_auth_session("):TUI.index("def _operator_user(")]
+    assert 'if cfg and _shared_operator_session_enabled(cfg):' in load_fn
+    assert 'if cfg and _shared_operator_session_enabled(cfg):' in save_fn
+    assert 'if cfg and _shared_operator_session_enabled(cfg):' in clear_fn
+
+
+def test_shift_session_can_still_be_cached_on_the_imaging_server_when_enabled():
     assert '"GET", "session"' in TUI
     assert '"POST",\n            "session"' in TUI
     assert '"DELETE", "session"' in TUI
     assert "bench-state.php" in TUI
     assert "bench-state.php" in REPORT_INSTALLER
+    assert "VSTL_SHARE_OPERATOR_SESSION" in TUI
     assert "VSTL_BENCH_CLIENT_ID" in TUI
     assert "bench_client_id" in TUI
     assert 'params["client_id"] = _bench_client_id()' in TUI

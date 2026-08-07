@@ -78,7 +78,7 @@ _UNSUPPORTED_WIPE_STANDARD = "Unsupported data sanitization method"
 _UNSUPPORTED_WIPE_MESSAGE = (
     "Clear-class and unknown wipe methods are disabled. "
     "Only approved purge-class methods can issue a certificate or authorize capture, "
-    "except the temporary HP EliteBook 640 G10 Clear-only exception."
+    "except the temporary HP EliteBook 640 G10 / 850 G5 Clear-only exception."
 )
 
 TESTING_MODE_CTRL_T = 20
@@ -7303,19 +7303,25 @@ def _compact_api_error(body: dict, raw_err: str) -> str:
     return combined[:300] if combined else raw_err[:300]
 
 
-def _is_hp_elitebook_640_g10_identity(ident: dict | None) -> bool:
+def _hp_elitebook_clear_exception_reason(ident: dict | None) -> str:
     text = " ".join(
         str((ident or {}).get(key) or "")
         for key in ("brand", "model", "model_label", "product_name")
     )
     normalized = re.sub(r"[^a-z0-9]+", " ", text.lower())
     compact = normalized.replace(" ", "")
-    return (
-        ("hp" in normalized.split() or "hewlettpackard" in compact)
-        and "elitebook" in normalized
-        and re.search(r"\b640\b", normalized) is not None
-        and re.search(r"\bg10\b", normalized) is not None
-    )
+    if not (("hp" in normalized.split() or "hewlettpackard" in compact) and "elitebook" in normalized):
+        return ""
+    for model, generation, reason in (
+        ("640", "g10", "temporary HP EliteBook 640 G10 clear-only policy"),
+        ("850", "g5", "temporary HP EliteBook 850 G5 clear-only policy"),
+    ):
+        if (
+            re.search(rf"\b{re.escape(model)}\b", normalized) is not None
+            and re.search(rf"\b{re.escape(generation)}\b", normalized) is not None
+        ):
+            return reason
+    return ""
 
 
 def _clear_exception_allowed(result: dict | None, ident: dict | None) -> bool:
@@ -7323,7 +7329,7 @@ def _clear_exception_allowed(result: dict | None, ident: dict | None) -> bool:
     return (
         bool((result or {}).get("clear_only_exception"))
         and method in _CLEAR_WIPE_METHOD_STANDARDS
-        and _is_hp_elitebook_640_g10_identity(ident)
+        and bool(_hp_elitebook_clear_exception_reason(ident))
     )
 
 

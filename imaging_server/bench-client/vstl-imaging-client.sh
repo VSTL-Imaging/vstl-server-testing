@@ -442,17 +442,25 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
     WIPE_START=$(date -Iseconds)
     # Clear-class helpers are allowed only as a destructive assist between
     # failed direct purge and the required final purge retry, except the
-    # temporary HP EliteBook 640 G10 clear-only exception.
+    # temporary HP EliteBook 640 G10 / 850 G5 clear-only exception.
     DMI_PROFILE="$(
         cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name \
             /sys/class/dmi/id/product_version 2>/dev/null || true
     )"
-    HP_640_G10_CLEAR_ONLY=0
+    HP_CLEAR_ONLY_EXCEPTION=0
+    HP_CLEAR_ONLY_LABEL=""
     if echo "$DMI_PROFILE" | grep -Eiq 'hp|hewlett' \
         && echo "$DMI_PROFILE" | grep -Eiq 'elitebook' \
         && echo "$DMI_PROFILE" | grep -Eiq '\b640\b' \
         && echo "$DMI_PROFILE" | grep -Eiq '\bg10\b'; then
-        HP_640_G10_CLEAR_ONLY=1
+        HP_CLEAR_ONLY_EXCEPTION=1
+        HP_CLEAR_ONLY_LABEL="HP EliteBook 640 G10"
+    elif echo "$DMI_PROFILE" | grep -Eiq 'hp|hewlett' \
+        && echo "$DMI_PROFILE" | grep -Eiq 'elitebook' \
+        && echo "$DMI_PROFILE" | grep -Eiq '\b850\b' \
+        && echo "$DMI_PROFILE" | grep -Eiq '\bg5\b'; then
+        HP_CLEAR_ONLY_EXCEPTION=1
+        HP_CLEAR_ONLY_LABEL="HP EliteBook 850 G5"
     fi
     WIPE_STANDARD="NIST 800-88 Purge"
     if [[ "$PRIMARY_DISK" =~ nvme ]]; then
@@ -477,9 +485,9 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
                 log "FATAL: NVMe Clear assist failed; final Purge retry cannot be trusted"
                 exit 7
             fi
-            if [[ "$HP_640_G10_CLEAR_ONLY" == "1" ]]; then
-                log "NVMe Clear assist completed; HP EliteBook 640 G10 temporary clear-only policy allows completion"
-                METHOD="NVMe Clear Erase (HP EliteBook 640 G10 temporary exception)"
+            if [[ "$HP_CLEAR_ONLY_EXCEPTION" == "1" ]]; then
+                log "NVMe Clear assist completed; $HP_CLEAR_ONLY_LABEL temporary clear-only policy allows completion"
+                METHOD="NVMe Clear Erase ($HP_CLEAR_ONLY_LABEL temporary exception)"
                 WIPE_STANDARD="NIST 800-88 Clear"
             else
                 log "NVMe Clear assist completed; retrying required final Purge"
@@ -507,9 +515,9 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
                 log "FATAL: ATA Clear assist failed; final Purge retry cannot be trusted"
                 exit 7
             fi
-            if [[ "$HP_640_G10_CLEAR_ONLY" == "1" ]]; then
-                log "BLKDISCARD Clear assist completed; HP EliteBook 640 G10 temporary clear-only policy allows completion"
-                METHOD="BLKDISCARD Clear (HP EliteBook 640 G10 temporary exception)"
+            if [[ "$HP_CLEAR_ONLY_EXCEPTION" == "1" ]]; then
+                log "BLKDISCARD Clear assist completed; $HP_CLEAR_ONLY_LABEL temporary clear-only policy allows completion"
+                METHOD="BLKDISCARD Clear ($HP_CLEAR_ONLY_LABEL temporary exception)"
                 WIPE_STANDARD="NIST 800-88 Clear"
             else
                 if ! ata_purge; then

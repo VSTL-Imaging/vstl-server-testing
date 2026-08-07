@@ -48,7 +48,7 @@ function vstl_clear_wipe_standard(string $method): string {
     return $standards[$method] ?? '';
 }
 
-function vstl_is_hp_elitebook_640_g10_payload(array $payload): bool {
+function vstl_hp_elitebook_clear_exception_reason(array $payload): string {
     $text = strtolower(trim(
         vstl_text($payload['brand'] ?? '') . ' ' .
         vstl_text($payload['model'] ?? '') . ' ' .
@@ -56,12 +56,23 @@ function vstl_is_hp_elitebook_640_g10_payload(array $payload): bool {
     ));
     $normalized = preg_replace('/[^a-z0-9]+/', ' ', $text) ?? '';
     $compact = str_replace(' ', '', $normalized);
-    return (
+    if (!(
         (preg_match('/\bhp\b/', $normalized) || strpos($compact, 'hewlettpackard') !== false) &&
-        strpos($normalized, 'elitebook') !== false &&
-        preg_match('/\b640\b/', $normalized) &&
-        preg_match('/\bg10\b/', $normalized)
-    );
+        strpos($normalized, 'elitebook') !== false
+    )) {
+        return '';
+    }
+    $models = [
+        ['640', 'g10', 'temporary HP EliteBook 640 G10 clear-only policy'],
+        ['850', 'g5', 'temporary HP EliteBook 850 G5 clear-only policy'],
+    ];
+    foreach ($models as $model) {
+        if (preg_match('/\b' . preg_quote($model[0], '/') . '\b/', $normalized) &&
+            preg_match('/\b' . preg_quote($model[1], '/') . '\b/', $normalized)) {
+            return $model[2];
+        }
+    }
+    return '';
 }
 
 function vstl_clear_exception_allowed(array $payload, array $erase): bool {
@@ -69,7 +80,7 @@ function vstl_clear_exception_allowed(array $payload, array $erase): bool {
     return (
         ($erase['clear_only_exception'] ?? false) === true &&
         vstl_clear_wipe_standard($method) !== '' &&
-        vstl_is_hp_elitebook_640_g10_payload($payload)
+        vstl_hp_elitebook_clear_exception_reason($payload) !== ''
     );
 }
 
@@ -150,7 +161,7 @@ function vstl_issue_local_secure_erase_certificate(array &$payload): bool {
     if (!vstl_is_certifiable_wipe_method($method, $allowClearException)) {
         $erase['wipe_standard'] = 'Unsupported data sanitization method';
         $erase['certificate_status'] = 'refused';
-        $erase['certificate_error'] = 'Clear-class and unknown wipe methods are disabled. Only approved purge-class methods can issue a certificate or authorize capture, except the temporary HP EliteBook 640 G10 Clear-only exception.';
+        $erase['certificate_error'] = 'Clear-class and unknown wipe methods are disabled. Only approved purge-class methods can issue a certificate or authorize capture, except the temporary HP EliteBook 640 G10 / 850 G5 Clear-only exception.';
         $erase['capture_gate_recorded'] = false;
         return false;
     }

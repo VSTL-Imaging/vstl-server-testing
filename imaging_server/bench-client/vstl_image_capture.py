@@ -1,4 +1,4 @@
-﻿"""
+"""
 vstl_image_capture.py â€” Phase 3 Capture Full System Image
 ==========================================================
 Mounts the configured NFS golden-copy share, runs Clonezilla's ocs-sr

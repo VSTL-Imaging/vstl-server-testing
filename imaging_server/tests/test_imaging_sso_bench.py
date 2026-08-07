@@ -54,15 +54,21 @@ def test_login_controls_layer_before_bench_screen_access():
     assert "Select your technician level" not in technician_fn
 
 
-def test_hidden_testing_mode_restore_only_bypasses_reporting_login_and_box_flow():
+def test_hidden_testing_mode_processes_bypass_reporting_login_and_box_flow():
     assert "TESTING_MODE_CTRL_T = 20" in TUI
     assert 'TESTING_MODE_HOTKEY_LABEL = "Ctrl+Shift+Alt+T"' in TUI
     assert "def _testing_modifier_chord_active(" in TUI
     assert "active & ctrl_keys and active & shift_keys and active & alt_keys" in TUI
     assert "def screen_testing_mode_menu(" in TUI
-    assert "5. {TESTING_RESTORE_ONLY_LABEL}" in TUI
+    assert '(TESTING_RESTORE_ONLY_CHOICE, "5", TESTING_RESTORE_ONLY_LABEL)' in TUI
+    assert '(TESTING_QC_ONLY_CHOICE, "6", TESTING_QC_ONLY_LABEL)' in TUI
+    assert '(TESTING_SECURE_ERASE_CHOICE, "7", TESTING_SECURE_ERASE_LABEL)' in TUI
     assert "if _operator_testing_mode(operator):" in TUI
-    assert "return run_testing_restore_only(stdscr, cfg)" in TUI
+    assert "testing_action = run_testing_restore_only(stdscr, cfg)" in TUI
+    assert "testing_action = run_testing_qc_only(stdscr, cfg)" in TUI
+    assert "testing_action = run_testing_secure_erase(stdscr, cfg)" in TUI
+    assert "Return to Main Menu" in TUI
+    assert "Return to Login" in TUI
 
     testing_flow = TUI[
         TUI.index("def run_testing_restore_only("):
@@ -76,6 +82,7 @@ def test_hidden_testing_mode_restore_only_bypasses_reporting_login_and_box_flow(
     assert "LOCAL_AUDIT_FILE" not in testing_flow
     assert "phase3_secure_erase(" in testing_flow
     assert "phase3_restore(" in testing_flow
+    assert "_run_qc_and_burn_flow(stdscr, cfg, tech)" in testing_flow
     assert "suppress_reporting=True" in testing_flow
 
     secure_erase_flow = TUI[
@@ -254,19 +261,23 @@ def test_ingest_response_surfaces_reconcile_and_l1_status():
     assert "operator session expired; audit queued safely" in TUI
 
 
-def test_l1_box_picker_is_wired_before_menu_and_payload_ingest():
+def test_l1_box_picker_is_wired_after_process_choice_and_skips_capture():
     assert '"/imaging/my-boxes"' in TUI
     fetch_fn = TUI[TUI.index("def fetch_my_boxes("):TUI.index("def auth_logout(")]
     assert "token=token" in fetch_fn
     assert "include_key=True" not in fetch_fn
 
     tech_pos = TUI.index("tech = _operator_bench_mode(operator)")
-    box_pos = TUI.index('if tech == "L1" and not ensure_operator_box(stdscr, cfg, operator):')
     menu_pos = TUI.index("choice = screen_main_menu(stdscr, tech, operator)")
-    assert tech_pos < box_pos < menu_pos
-    assert "if choice != BOX_SWITCH_CHOICE:" in TUI
+    box_pos = TUI.index('if tech == "L1" and _menu_choice_requires_l1_box(choice):')
+    assert tech_pos < menu_pos < box_pos
+    assert "BOX_REQUIRED_MENU_CHOICES = {0, 1, 2}" in TUI
+    assert "BOX_SWITCH_CHOICE" not in TUI
+    assert "B switch box" not in TUI
+    menu_fn = TUI[TUI.index("def screen_main_menu("):TUI.index("def screen_testing_mode_menu(")]
+    assert "Lot / Box:" not in menu_fn
     assert "screen_box_picker(stdscr, cfg, operator)" in TUI
-    assert "_attach_box_scope_to_payload(payload, operator)" in TUI
+    assert "if _menu_choice_requires_l1_box(choice):\n        _attach_box_scope_to_payload(payload, operator)" in TUI
     assert "No boxes assigned to you. Ask your supervisor to allocate a box." in TUI
     assert "Legacy bench operation can continue" not in TUI
     assert "ENTER legacy mode" not in TUI

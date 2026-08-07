@@ -85,7 +85,14 @@ TESTING_MODE_CTRL_T = 20
 TESTING_MODE_HOTKEY_LABEL = "Ctrl+Shift+Alt+T"
 TESTING_MODE_SENTINEL = "__VSTL_TESTING_MODE__"
 TESTING_RESTORE_ONLY_CHOICE = 4
+TESTING_QC_ONLY_CHOICE = 5
+TESTING_SECURE_ERASE_CHOICE = 6
 TESTING_RESTORE_ONLY_LABEL = "Restore Only OS"
+TESTING_QC_ONLY_LABEL = "QC"
+TESTING_SECURE_ERASE_LABEL = "Secure Erase"
+TESTING_END_RESTART = "restart"
+TESTING_END_MAIN_MENU = "main_menu"
+TESTING_END_LOGIN = "login"
 
 
 # ----------------------------------------------------------------------------
@@ -1884,7 +1891,7 @@ MENU_OPTIONS = [
     "Capture Full System Image",
 ]
 AUTO_SELECT_SECS = 5
-BOX_SWITCH_CHOICE = -1
+BOX_REQUIRED_MENU_CHOICES = {0, 1, 2}
 
 
 def _visible_menu_options(operator: dict | None) -> list[tuple[int, str]]:
@@ -1896,8 +1903,12 @@ def _visible_menu_options(operator: dict | None) -> list[tuple[int, str]]:
     return options
 
 
+def _menu_choice_requires_l1_box(choice: int | None) -> bool:
+    return choice in BOX_REQUIRED_MENU_CHOICES
+
+
 def screen_main_menu(stdscr, technician: str, operator: dict | None = None) -> int:
-    """Returns 0..3, or BOX_SWITCH_CHOICE for an L1 box change.
+    """Returns 0..3 for the selected process.
 
     Per spec 1.3: countdown is regardless of technician level.
     Per spec 1.4: ENTER confirms highlighted; if none, defaults to Option 1.
@@ -1913,15 +1924,6 @@ def screen_main_menu(stdscr, technician: str, operator: dict | None = None) -> i
             h, w = stdscr.getmaxyx()
             _safe_addstr(stdscr, 3, 4, f"User: {_operator_label(operator)}", curses.A_BOLD)
             menu_start = 6
-            if technician == "L1":
-                _safe_addstr(
-                    stdscr,
-                    4,
-                    4,
-                    f"Lot / Box: {_box_scope_label(_operator_box(operator))}",
-                    curses.color_pair(CYAN_PAIR),
-                )
-                menu_start = 7
             _safe_addstr(stdscr, menu_start - 2, 4, "Choose an action:", curses.A_BOLD)
 
             for display_idx, (_choice_idx, label) in enumerate(visible_options):
@@ -1960,8 +1962,7 @@ def screen_main_menu(stdscr, technician: str, operator: dict | None = None) -> i
                 _safe_addstr(stdscr, menu_start + len(visible_options) * 2 + 2, 4,
                              "Auto-select cancelled — press ENTER to confirm your choice",
                              curses.color_pair(DIM_PAIR))
-            box_hint = "   B switch box" if technician == "L1" else ""
-            draw_footer(stdscr, f"UP/DOWN navigate   1-{len(visible_options)} jump   ENTER confirm{box_hint}   Q quit")
+            draw_footer(stdscr, f"UP/DOWN navigate   1-{len(visible_options)} jump   ENTER confirm   Q quit")
             stdscr.refresh()
 
             ch = stdscr.getch()
@@ -1982,8 +1983,6 @@ def screen_main_menu(stdscr, technician: str, operator: dict | None = None) -> i
                 selected = ch - ord("1")
             elif ch in (10, 13, curses.KEY_ENTER):
                 return visible_options[selected][0]
-            elif technician == "L1" and ch in (ord("b"), ord("B")):
-                return BOX_SWITCH_CHOICE
             elif ch in (ord("q"), ord("Q")):
                 sys.exit(0)
     finally:
@@ -1992,28 +1991,44 @@ def screen_main_menu(stdscr, technician: str, operator: dict | None = None) -> i
 
 def screen_testing_mode_menu(stdscr) -> int:
     """Hidden maintenance menu reached by the testing-mode hotkey."""
+    options = [
+        (TESTING_RESTORE_ONLY_CHOICE, "5", TESTING_RESTORE_ONLY_LABEL),
+        (TESTING_QC_ONLY_CHOICE, "6", TESTING_QC_ONLY_LABEL),
+        (TESTING_SECURE_ERASE_CHOICE, "7", TESTING_SECURE_ERASE_LABEL),
+    ]
+    selected = 0
     while True:
         _begin_screen_frame(stdscr, "Testing Mode")
         _safe_addstr(stdscr, 4, 4, "Choose an action:", curses.A_BOLD)
-        _draw_selectable_row(
-            stdscr,
-            7,
-            6,
-            f"5. {TESTING_RESTORE_ONLY_LABEL}",
-            True,
-        )
+        for row, (_choice, key, label) in enumerate(options):
+            _draw_selectable_row(
+                stdscr,
+                7 + row * 2,
+                6,
+                f"{key}. {label}",
+                row == selected,
+            )
         _safe_addstr(
             stdscr,
-            10,
+            14,
             6,
-            "Reports are disabled for this testing-mode restore.",
+            "Reports and server submissions are disabled in testing mode.",
             curses.color_pair(DIM_PAIR),
         )
-        draw_footer(stdscr, "5 restore only OS   ENTER confirm   Q quit")
+        draw_footer(stdscr, "UP/DOWN select   5/6/7 jump   ENTER confirm   Q quit")
         stdscr.refresh()
         ch = stdscr.getch()
-        if ch in (ord("5"), 10, 13, curses.KEY_ENTER):
-            return TESTING_RESTORE_ONLY_CHOICE
+        if ch in (curses.KEY_UP, ord("k")):
+            selected = (selected - 1) % len(options)
+        elif ch in (curses.KEY_DOWN, ord("j")):
+            selected = (selected + 1) % len(options)
+        elif ch in (10, 13, curses.KEY_ENTER):
+            return options[selected][0]
+        else:
+            for index, (choice, key, _label) in enumerate(options):
+                if ch == ord(key):
+                    selected = index
+                    return choice
         if ch in (ord("q"), ord("Q")):
             sys.exit(0)
 
@@ -6265,6 +6280,10 @@ def screen_qc_summary(stdscr, summary: dict, layer: str) -> str:
         lines.append(("L1 layer — failures recorded with remarks. Continuing.",
                       curses.color_pair(YELLOW_PAIR)))
         decision = "continue"
+    elif layer == "TESTING":
+        lines.append(("Testing mode - failures shown locally only. Continuing.",
+                      curses.color_pair(YELLOW_PAIR)))
+        decision = "continue"
     else:  # L2
         lines.append(("L2 layer — unit will be ROUTED BACK for rework.",
                       curses.A_BOLD | curses.color_pair(RED_PAIR)))
@@ -8905,6 +8924,94 @@ def phase3_restore(stdscr, ident: dict, cfg: dict,
     }
 
 
+def _detect_and_show_hardware_profile(stdscr) -> tuple[dict, dict, dict]:
+    ident = hw.detect_identity()
+    cpu = hw.detect_cpu()
+    gpu = hw.detect_gpu()
+    ram = hw.detect_ram()
+    storage = hw.detect_storage()
+    battery = hw.detect_battery()
+
+    screen_model(stdscr, ident)
+    screen_sku(stdscr, ident)
+    screen_cpu(stdscr, cpu)
+    screen_gpu(stdscr, gpu)
+    screen_ram(stdscr, ram)
+    screen_storage(stdscr, storage)
+    screen_battery(stdscr, battery)
+    return ident, cpu, storage
+
+
+def _run_qc_and_burn_flow(
+    stdscr,
+    cfg: dict,
+    tech: str,
+) -> tuple[dict | None, dict | None, int | None, dict | None]:
+    qc_started_ts = time.monotonic()
+    driver_preflight = qc.driver_preflight_result()
+    test_keys = qc.applicable_tests_for(tech)
+    _qc_intro(stdscr, tech, len(test_keys))
+    results: list[dict] = [driver_preflight]
+    completed_qc_results: dict[str, dict] = {}
+    qc_index = 0
+    while True:
+        while qc_index < len(test_keys):
+            key = test_keys[qc_index]
+            screen_fn = QC_SCREEN_DISPATCH[key]
+            completed_qc_results[key] = screen_fn(stdscr)
+            nav_action = screen_qc_step_complete(
+                stdscr,
+                completed_qc_results[key],
+                has_previous=qc_index > 0,
+            )
+            if nav_action == "back":
+                qc_index = max(0, qc_index - 1)
+                continue
+            if nav_action == "retest":
+                continue
+            qc_index += 1
+        results = [driver_preflight]
+        results.extend(
+            completed_qc_results[key]
+            for key in test_keys
+            if key in completed_qc_results
+        )
+        qc_summary = qc.summarize(results)
+        qc_decision = screen_qc_summary(stdscr, qc_summary, tech)
+        post_qc_details = screen_post_qc_details(
+            stdscr,
+            allow_back_to_qc=bool(test_keys),
+        )
+        if post_qc_details.get("_nav") == "back_to_qc":
+            qc_index = max(0, len(test_keys) - 1)
+            post_qc_details = None
+            continue
+        qc_summary["post_qc"] = dict(post_qc_details)
+        break
+
+    # 5. Phase 2C - Burn / Stress (always 5 min, L1 may skip per 3c)
+    if qc_decision == "rework":
+        burn_result = bs.skipped_result(
+            "Auto-skip: L2 QC failed, unit routing back for rework"
+        )
+    else:
+        duration = _read_burn_duration(cfg)
+        run_it = screen_burn_intro(stdscr, tech, duration)
+        if not run_it:
+            remarks = _qc_remarks_dialog(
+                stdscr,
+                "Why are you skipping the 5-min burn test?"
+            )
+            burn_result = bs.skipped_result(
+                f"L1 operator skipped - {remarks or 'no remarks'}"
+            )
+        else:
+            burn_result = screen_burn_progress(stdscr, duration, cfg)
+            screen_burn_result(stdscr, burn_result, tech)
+    qc_elapsed_sec = int(time.monotonic() - qc_started_ts)
+    return qc_summary, burn_result, qc_elapsed_sec, post_qc_details
+
+
 def screen_completion(stdscr, ident: dict, ingest_ok: bool, ingest_msg: str,
                       technician: str, choice_idx: int,
                       lock_audit: Optional[dict] = None,
@@ -9020,9 +9127,54 @@ def screen_completion(stdscr, ident: dict, ingest_ok: bool, ingest_msg: str,
             sys.exit(2)  # signals entrypoint shell to skip auto-shutdown
 
 
+def screen_testing_process_completion(
+    stdscr,
+    title: str,
+    ident: dict,
+    status: str,
+    ok: bool,
+    detail_lines: list[tuple[str, int]],
+) -> str:
+    """Final screen for hidden testing workflows."""
+    stdscr.erase()
+    draw_header(stdscr, title)
+    color = GREEN_PAIR if ok else RED_PAIR
+    lines = [
+        (status, curses.A_BOLD | curses.color_pair(color)),
+        ("", 0),
+        (f"Serial No.: {ident.get('serial_no', '(unknown)')}", curses.A_BOLD),
+        (f"Brand / Model: {ident.get('brand', 'UNKNOWN')}  {ident.get('model', 'UNKNOWN')}", curses.A_NORMAL),
+        ("", 0),
+    ]
+    lines.extend(detail_lines)
+    lines.extend([
+        ("", 0),
+        ("No VSTL app audit or bench report was submitted.",
+         curses.A_BOLD | curses.color_pair(YELLOW_PAIR)),
+        ("", 0),
+        ("[ ENTER ]  Restart", curses.A_BOLD),
+        ("[   M   ]  Return to Main Menu", curses.color_pair(CYAN_PAIR)),
+        ("[   L   ]  Return to Login", curses.color_pair(CYAN_PAIR)),
+    ])
+    center_block(stdscr, lines, top_offset=4)
+    draw_footer(stdscr, "ENTER restart   M main menu   L login   Q drop to shell")
+    stdscr.refresh()
+
+    while True:
+        ch = stdscr.getch()
+        if ch in (10, 13, curses.KEY_ENTER):
+            return TESTING_END_RESTART
+        if ch in (ord("m"), ord("M")):
+            return TESTING_END_MAIN_MENU
+        if ch in (ord("l"), ord("L")):
+            return TESTING_END_LOGIN
+        if ch in (ord("q"), ord("Q")):
+            sys.exit(2)
+
+
 def screen_testing_restore_completion(stdscr, ident: dict,
                                       erase_result: dict | None,
-                                      restore_result: dict | None) -> None:
+                                      restore_result: dict | None) -> str:
     """Final screen for the hidden restore-only testing workflow."""
     erase_ok = bool(
         erase_result
@@ -9034,48 +9186,79 @@ def screen_testing_restore_completion(stdscr, ident: dict,
         and restore_result.get("ok")
         and restore_result.get("verified")
     )
-    stdscr.erase()
-    draw_header(stdscr, "Testing Mode - Restore Only OS")
-    h, w = stdscr.getmaxyx()
-    status = (
-        "Restore-only OS completed"
-        if restore_ok else
-        "Restore-only OS did not complete"
-    )
-    color = GREEN_PAIR if restore_ok else RED_PAIR
-    lines = [
-        (status, curses.A_BOLD | curses.color_pair(color)),
-        ("", 0),
-        (f"Serial No.: {ident.get('serial_no', '(unknown)')}", curses.A_BOLD),
-        (f"Brand / Model: {ident.get('brand', 'UNKNOWN')}  {ident.get('model', 'UNKNOWN')}", curses.A_NORMAL),
-        ("", 0),
+    _, w = stdscr.getmaxyx()
+    detail_lines = [
         (f"Wipe    : {'PASS' if erase_ok else 'FAIL / SKIPPED'}",
          curses.color_pair(GREEN_PAIR if erase_ok else RED_PAIR)),
         (f"Restore : {'PASS' if restore_ok else 'FAIL / SKIPPED'}",
          curses.color_pair(GREEN_PAIR if restore_ok else RED_PAIR)),
-        ("", 0),
-        ("No VSTL app audit or bench report was submitted.",
-         curses.A_BOLD | curses.color_pair(YELLOW_PAIR)),
     ]
     if restore_result and restore_result.get("image_name"):
-        lines.insert(
-            7,
+        detail_lines.insert(
+            1,
             (f"Image   : {str(restore_result.get('image_name'))[: max(20, w - 18)]}",
              curses.color_pair(CYAN_PAIR)),
         )
-    center_block(stdscr, lines, top_offset=4)
-    draw_footer(stdscr, "ENTER restart system   Q drop to shell")
-    stdscr.refresh()
+    return screen_testing_process_completion(
+        stdscr,
+        "Testing Mode - Restore Only OS",
+        ident,
+        "Restore-only OS completed" if restore_ok else "Restore-only OS did not complete",
+        restore_ok,
+        detail_lines,
+    )
 
-    while True:
-        ch = stdscr.getch()
-        if ch in (10, 13, curses.KEY_ENTER):
-            return
-        if ch in (ord("q"), ord("Q")):
-            sys.exit(2)
+def screen_testing_qc_completion(stdscr, ident: dict,
+                                 qc_summary: dict | None,
+                                 burn_result: dict | None,
+                                 erase_result: dict | None = None) -> str:
+    failed = bool(qc_summary and qc_summary.get("failed"))
+    qc_text = (qc_summary or {}).get("summary") or "QC not completed"
+    burn_text = str((burn_result or {}).get("result") or "SKIPPED")
+    detail_lines = [
+        (f"QC      : {qc_text}", curses.color_pair(YELLOW_PAIR if failed else GREEN_PAIR)),
+        (f"Burn    : {burn_text}", curses.color_pair(GREEN_PAIR if burn_text == "PASS" else YELLOW_PAIR)),
+    ]
+    if erase_result is not None:
+        erase_ok = bool(erase_result.get("ok") and erase_result.get("verified"))
+        detail_lines.append(
+            (f"Erase   : {'PASS' if erase_ok else 'FAIL / SKIPPED'}",
+             curses.color_pair(GREEN_PAIR if erase_ok else RED_PAIR))
+        )
+    return screen_testing_process_completion(
+        stdscr,
+        "Testing Mode - QC",
+        ident,
+        "QC testing completed" if qc_summary else "QC testing did not complete",
+        bool(qc_summary),
+        detail_lines,
+    )
 
 
-def run_testing_restore_only(stdscr, cfg: dict) -> int:
+def screen_testing_secure_erase_completion(stdscr, ident: dict,
+                                           erase_result: dict | None) -> str:
+    erase_ok = bool(
+        erase_result
+        and erase_result.get("ok")
+        and erase_result.get("verified")
+    )
+    method = str((erase_result or {}).get("method") or "SKIPPED")
+    detail_lines = [
+        (f"Erase   : {'PASS' if erase_ok else 'FAIL / SKIPPED'}",
+         curses.color_pair(GREEN_PAIR if erase_ok else RED_PAIR)),
+        (f"Method  : {method}", curses.color_pair(DIM_PAIR)),
+    ]
+    return screen_testing_process_completion(
+        stdscr,
+        "Testing Mode - Secure Erase",
+        ident,
+        "Secure erase completed" if erase_ok else "Secure erase did not complete",
+        erase_ok,
+        detail_lines,
+    )
+
+
+def run_testing_restore_only(stdscr, cfg: dict) -> str:
     """Hidden testing workflow: wipe then restore an OS image without reporting."""
     tech = "TESTING"
     _begin_screen_frame(stdscr, "Testing Mode - Restore Only OS")
@@ -9089,8 +9272,7 @@ def run_testing_restore_only(stdscr, cfg: dict) -> int:
     ident = hw.detect_identity()
     cpu = hw.detect_cpu()
     if not _restore_backup_available(stdscr, ident, cfg, cpu):
-        screen_testing_restore_completion(stdscr, ident, None, None)
-        return 0
+        return screen_testing_restore_completion(stdscr, ident, None, None)
 
     erase = phase3_secure_erase(
         stdscr,
@@ -9108,8 +9290,7 @@ def run_testing_restore_only(stdscr, cfg: dict) -> int:
             color=RED_PAIR,
             secs=4,
         )
-        screen_testing_restore_completion(stdscr, ident, erase_result, None)
-        return 0
+        return screen_testing_restore_completion(stdscr, ident, erase_result, None)
 
     restore = phase3_restore(
         stdscr,
@@ -9120,8 +9301,64 @@ def run_testing_restore_only(stdscr, cfg: dict) -> int:
         suppress_reporting=True,
     )
     restore_result = (restore or {}).get("result") or {}
-    screen_testing_restore_completion(stdscr, ident, erase_result, restore_result)
-    return 0
+    return screen_testing_restore_completion(stdscr, ident, erase_result, restore_result)
+
+
+def run_testing_qc_only(stdscr, cfg: dict) -> str:
+    """Hidden testing workflow: run QC locally without app/server reporting."""
+    tech = "TESTING"
+    _begin_screen_frame(stdscr, "Testing Mode - QC")
+    center_block(stdscr, [
+        ("Detecting system hardware before local QC...", curses.A_BOLD),
+        ("Reports are disabled for this run.", curses.color_pair(DIM_PAIR)),
+    ], top_offset=5)
+    draw_footer(stdscr, "Please wait")
+    stdscr.refresh()
+
+    ident, _cpu, _storage = _detect_and_show_hardware_profile(stdscr)
+    qc_summary, burn_result, _qc_elapsed_sec, _post_qc_details = (
+        _run_qc_and_burn_flow(stdscr, cfg, tech)
+    )
+    erase_result: dict | None = None
+    if _confirm_yn(
+        stdscr,
+        "Run Certified Secure Erase now?\n"
+        "(Y = wipe drive locally, N = skip)",
+    ):
+        erase = phase3_secure_erase(
+            stdscr,
+            ident,
+            cfg,
+            tech,
+            operator=None,
+            suppress_reporting=True,
+        )
+        erase_result = (erase or {}).get("result") or {}
+    return screen_testing_qc_completion(stdscr, ident, qc_summary, burn_result, erase_result)
+
+
+def run_testing_secure_erase(stdscr, cfg: dict) -> str:
+    """Hidden testing workflow: run secure erase locally without reporting."""
+    tech = "TESTING"
+    _begin_screen_frame(stdscr, "Testing Mode - Secure Erase")
+    center_block(stdscr, [
+        ("Detecting system hardware before local secure erase...", curses.A_BOLD),
+        ("Reports are disabled for this run.", curses.color_pair(DIM_PAIR)),
+    ], top_offset=5)
+    draw_footer(stdscr, "Please wait")
+    stdscr.refresh()
+
+    ident, _cpu, _storage = _detect_and_show_hardware_profile(stdscr)
+    erase = phase3_secure_erase(
+        stdscr,
+        ident,
+        cfg,
+        tech,
+        operator=None,
+        suppress_reporting=True,
+    )
+    erase_result = (erase or {}).get("result") or {}
+    return screen_testing_secure_erase_completion(stdscr, ident, erase_result)
 
 
 # ---------------------------------------------------------------------------
@@ -9141,9 +9378,21 @@ def run(stdscr) -> int:
         operator = screen_login(stdscr, cfg)
         _drain_pending_input(stdscr)
         if _operator_testing_mode(operator):
-            choice = screen_testing_mode_menu(stdscr)
-            if choice == TESTING_RESTORE_ONLY_CHOICE:
-                return run_testing_restore_only(stdscr, cfg)
+            while True:
+                choice = screen_testing_mode_menu(stdscr)
+                if choice == TESTING_RESTORE_ONLY_CHOICE:
+                    testing_action = run_testing_restore_only(stdscr, cfg)
+                elif choice == TESTING_QC_ONLY_CHOICE:
+                    testing_action = run_testing_qc_only(stdscr, cfg)
+                elif choice == TESTING_SECURE_ERASE_CHOICE:
+                    testing_action = run_testing_secure_erase(stdscr, cfg)
+                else:
+                    continue
+                if testing_action == TESTING_END_MAIN_MENU:
+                    continue
+                if testing_action == TESTING_END_LOGIN:
+                    break
+                return 0
             continue
         if not operator.get("_bench_layer_confirmed") and _operator_has_layer_access(operator):
             selected_layer = screen_working_layer(stdscr, _operator_name(operator))
@@ -9166,22 +9415,13 @@ def run(stdscr) -> int:
             stdscr.getch()
             continue
 
-        # Box slot-fill is an L1 workflow. L2 uses the real serial that L1
-        # already stamped onto the inward placeholder asset.
-        if tech == "L1" and not ensure_operator_box(stdscr, cfg, operator):
-            continue
-
         _drain_pending_input(stdscr)
-        while True:
-            choice = screen_main_menu(stdscr, tech, operator)
-            if choice != BOX_SWITCH_CHOICE:
-                break
+        choice = screen_main_menu(stdscr, tech, operator)
+        if tech == "L1" and _menu_choice_requires_l1_box(choice):
             if not screen_box_picker(stdscr, cfg, operator):
-                choice = None
-                break
+                continue
             _drain_pending_input(stdscr)
-        if choice is not None:
-            break
+        break
 
     # 2A. Phase 2A — Lock & MDM/BIOS Audit (runs FIRST, per spec)
     audit = screen_lock_audit_run(stdscr)
@@ -9304,71 +9544,10 @@ def run(stdscr) -> int:
         hardware_label_overrides = {}
 
         if needs_qc:
-            qc_started_ts = time.monotonic()
-            # 4. Phase 2B — Interactive QC Tests (layer-gated per design 1b)
-            driver_preflight = qc.driver_preflight_result()
-            test_keys = qc.applicable_tests_for(tech)
-            _qc_intro(stdscr, tech, len(test_keys))
-            results: list[dict] = [driver_preflight]
-            completed_qc_results: dict[str, dict] = {}
-            qc_index = 0
-            while True:
-                while qc_index < len(test_keys):
-                    key = test_keys[qc_index]
-                    screen_fn = QC_SCREEN_DISPATCH[key]
-                    completed_qc_results[key] = screen_fn(stdscr)
-                    nav_action = screen_qc_step_complete(
-                        stdscr,
-                        completed_qc_results[key],
-                        has_previous=qc_index > 0,
-                    )
-                    if nav_action == "back":
-                        qc_index = max(0, qc_index - 1)
-                        continue
-                    if nav_action == "retest":
-                        continue
-                    qc_index += 1
-                results = [driver_preflight]
-                results.extend(
-                    completed_qc_results[key]
-                    for key in test_keys
-                    if key in completed_qc_results
-                )
-                qc_summary = qc.summarize(results)
-                qc_decision = screen_qc_summary(stdscr, qc_summary, tech)
-                post_qc_details = screen_post_qc_details(
-                    stdscr,
-                    allow_back_to_qc=bool(test_keys),
-                )
-                if post_qc_details.get("_nav") == "back_to_qc":
-                    qc_index = max(0, len(test_keys) - 1)
-                    post_qc_details = None
-                    continue
-                qc_summary["post_qc"] = dict(post_qc_details)
-                break
-
-            # 5. Phase 2C — Burn / Stress (always 5 min, L1 may skip per 3c)
-            if qc_decision == "rework":
-                # L2 already failing QC — skip burn, route back faster
-                burn_result = bs.skipped_result(
-                    "Auto-skip: L2 QC failed, unit routing back for rework"
-                )
-            else:
-                duration = _read_burn_duration(cfg)
-                run_it = screen_burn_intro(stdscr, tech, duration)
-                if not run_it:
-                    # L1 skip path — capture reason
-                    remarks = _qc_remarks_dialog(
-                        stdscr,
-                        "Why are you skipping the 5-min burn test?"
-                    )
-                    burn_result = bs.skipped_result(
-                        f"L1 operator skipped — {remarks or 'no remarks'}"
-                    )
-                else:
-                    burn_result = screen_burn_progress(stdscr, duration, cfg)
-                    screen_burn_result(stdscr, burn_result, tech)
-            qc_elapsed_sec = int(time.monotonic() - qc_started_ts)
+            # 4/5. Phase 2B QC + Phase 2C Burn / Stress.
+            qc_summary, burn_result, qc_elapsed_sec, post_qc_details = (
+                _run_qc_and_burn_flow(stdscr, cfg, tech)
+            )
 
         # ---------------- Phase 3 action dispatch ----------------
         # Skip Phase 3 entirely on L2 rework routing — the unit is going
@@ -9423,7 +9602,8 @@ def run(stdscr) -> int:
     # Build the payload (compose without re-running every detector)
     payload = hw.collect_phase1(technician_level=tech, bench_id=_bench_id(cfg))
     _attach_operator_to_payload(payload, operator)
-    _attach_box_scope_to_payload(payload, operator)
+    if _menu_choice_requires_l1_box(choice):
+        _attach_box_scope_to_payload(payload, operator)
     _apply_hardware_label_overrides(payload, hardware_label_overrides)
     payload["selected_option"] = choice + 1  # 1-indexed for human reading
     payload["selected_option_label"] = MENU_OPTIONS[choice]

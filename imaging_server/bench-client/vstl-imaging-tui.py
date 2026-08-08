@@ -78,7 +78,7 @@ _UNSUPPORTED_WIPE_STANDARD = "Unsupported data sanitization method"
 _UNSUPPORTED_WIPE_MESSAGE = (
     "Clear-class and unknown wipe methods are disabled. "
     "Only approved purge-class methods can issue a certificate or authorize capture, "
-    "except the temporary HP EliteBook 640 G10 / 850 G5 Clear-only exception."
+    "except temporary model-specific Clear-only exceptions."
 )
 
 TESTING_MODE_CTRL_T = 20
@@ -7303,22 +7303,23 @@ def _compact_api_error(body: dict, raw_err: str) -> str:
     return combined[:300] if combined else raw_err[:300]
 
 
-def _hp_elitebook_clear_exception_reason(ident: dict | None) -> str:
+def _clear_only_exception_reason(ident: dict | None) -> str:
     text = " ".join(
         str((ident or {}).get(key) or "")
         for key in ("brand", "model", "model_label", "product_name")
     )
     normalized = re.sub(r"[^a-z0-9]+", " ", text.lower())
     compact = normalized.replace(" ", "")
-    if not (("hp" in normalized.split() or "hewlettpackard" in compact) and "elitebook" in normalized):
-        return ""
-    for model, generation, reason in (
-        ("640", "g10", "temporary HP EliteBook 640 G10 clear-only policy"),
-        ("850", "g5", "temporary HP EliteBook 850 G5 clear-only policy"),
+    words = normalized.split()
+    for vendor_tokens, family, model_tokens, reason in (
+        (("hp", "hewlettpackard"), "elitebook", ("640", "g10"), "temporary HP EliteBook 640 G10 clear-only policy"),
+        (("hp", "hewlettpackard"), "elitebook", ("850", "g5"), "temporary HP EliteBook 850 G5 clear-only policy"),
+        (("dell",), "latitude", ("5520",), "temporary Dell Latitude 5520 clear-only policy"),
     ):
         if (
-            re.search(rf"\b{re.escape(model)}\b", normalized) is not None
-            and re.search(rf"\b{re.escape(generation)}\b", normalized) is not None
+            any(token in words or token in compact for token in vendor_tokens)
+            and family in normalized
+            and all(re.search(rf"\b{re.escape(token)}\b", normalized) is not None for token in model_tokens)
         ):
             return reason
     return ""
@@ -7329,7 +7330,7 @@ def _clear_exception_allowed(result: dict | None, ident: dict | None) -> bool:
     return (
         bool((result or {}).get("clear_only_exception"))
         and method in _CLEAR_WIPE_METHOD_STANDARDS
-        and bool(_hp_elitebook_clear_exception_reason(ident))
+        and bool(_clear_only_exception_reason(ident))
     )
 
 

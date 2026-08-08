@@ -48,28 +48,41 @@ function vstl_clear_wipe_standard(string $method): string {
     return $standards[$method] ?? '';
 }
 
-function vstl_hp_elitebook_clear_exception_reason(array $payload): string {
+function vstl_clear_only_exception_reason(array $payload): string {
     $text = strtolower(trim(
         vstl_text($payload['brand'] ?? '') . ' ' .
         vstl_text($payload['model'] ?? '') . ' ' .
-        vstl_text($payload['model_label'] ?? '')
+        vstl_text($payload['model_label'] ?? '') . ' ' .
+        vstl_text($payload['product_name'] ?? '')
     ));
     $normalized = preg_replace('/[^a-z0-9]+/', ' ', $text) ?? '';
     $compact = str_replace(' ', '', $normalized);
-    if (!(
-        (preg_match('/\bhp\b/', $normalized) || strpos($compact, 'hewlettpackard') !== false) &&
-        strpos($normalized, 'elitebook') !== false
-    )) {
-        return '';
-    }
     $models = [
-        ['640', 'g10', 'temporary HP EliteBook 640 G10 clear-only policy'],
-        ['850', 'g5', 'temporary HP EliteBook 850 G5 clear-only policy'],
+        [['hp', 'hewlettpackard'], 'elitebook', ['640', 'g10'], 'temporary HP EliteBook 640 G10 clear-only policy'],
+        [['hp', 'hewlettpackard'], 'elitebook', ['850', 'g5'], 'temporary HP EliteBook 850 G5 clear-only policy'],
+        [['dell'], 'latitude', ['5520'], 'temporary Dell Latitude 5520 clear-only policy'],
     ];
-    foreach ($models as $model) {
-        if (preg_match('/\b' . preg_quote($model[0], '/') . '\b/', $normalized) &&
-            preg_match('/\b' . preg_quote($model[1], '/') . '\b/', $normalized)) {
-            return $model[2];
+    foreach ($models as $rule) {
+        $vendorMatched = false;
+        foreach ($rule[0] as $vendor) {
+            if (preg_match('/\b' . preg_quote($vendor, '/') . '\b/', $normalized) ||
+                strpos($compact, $vendor) !== false) {
+                $vendorMatched = true;
+                break;
+            }
+        }
+        if (!$vendorMatched || strpos($normalized, $rule[1]) === false) {
+            continue;
+        }
+        $tokensMatched = true;
+        foreach ($rule[2] as $token) {
+            if (!preg_match('/\b' . preg_quote($token, '/') . '\b/', $normalized)) {
+                $tokensMatched = false;
+                break;
+            }
+        }
+        if ($tokensMatched) {
+            return $rule[3];
         }
     }
     return '';
@@ -80,7 +93,7 @@ function vstl_clear_exception_allowed(array $payload, array $erase): bool {
     return (
         ($erase['clear_only_exception'] ?? false) === true &&
         vstl_clear_wipe_standard($method) !== '' &&
-        vstl_hp_elitebook_clear_exception_reason($payload) !== ''
+        vstl_clear_only_exception_reason($payload) !== ''
     );
 }
 
@@ -161,7 +174,7 @@ function vstl_issue_local_secure_erase_certificate(array &$payload): bool {
     if (!vstl_is_certifiable_wipe_method($method, $allowClearException)) {
         $erase['wipe_standard'] = 'Unsupported data sanitization method';
         $erase['certificate_status'] = 'refused';
-        $erase['certificate_error'] = 'Clear-class and unknown wipe methods are disabled. Only approved purge-class methods can issue a certificate or authorize capture, except the temporary HP EliteBook 640 G10 / 850 G5 Clear-only exception.';
+        $erase['certificate_error'] = 'Clear-class and unknown wipe methods are disabled. Only approved purge-class methods can issue a certificate or authorize capture, except temporary model-specific Clear-only exceptions.';
         $erase['capture_gate_recorded'] = false;
         return false;
     }

@@ -69,9 +69,10 @@ _CLEAR_METHOD_STANDARDS = {
     "NVMe_SOFTWARE_ZERO_CLEAR": "NIST SP 800-88 Clear",
     "BLKDISCARD": "NIST SP 800-88 Clear",
 }
-_HP_CLEAR_ONLY_EXCEPTION_MODELS = (
-    ("640", "g10", "temporary HP EliteBook 640 G10 clear-only policy"),
-    ("850", "g5", "temporary HP EliteBook 850 G5 clear-only policy"),
+_CLEAR_ONLY_EXCEPTION_MODELS = (
+    (("hp", "hewlettpackard"), "elitebook", ("640", "g10"), "temporary HP EliteBook 640 G10 clear-only policy"),
+    (("hp", "hewlettpackard"), "elitebook", ("850", "g5"), "temporary HP EliteBook 850 G5 clear-only policy"),
+    (("dell",), "latitude", ("5520",), "temporary Dell Latitude 5520 clear-only policy"),
 )
 _NVME_SANITIZE_ACTION_LABELS = {
     2: "NVMe_SANITIZE_BLOCK_ERASE",
@@ -139,15 +140,15 @@ def _is_legacy_dell_platform(profile: str | None = None) -> bool:
     return any(number < 5500 for number in model_numbers)
 
 
-def _hp_elitebook_clear_exception_reason(profile: str | None = None) -> str:
+def _clear_only_exception_reason(profile: str | None = None) -> str:
     normalized = re.sub(r"[^a-z0-9]+", " ", (profile or _system_dmi_profile()).lower())
     compact = normalized.replace(" ", "")
-    if not (("hp" in normalized.split() or "hewlettpackard" in compact) and "elitebook" in normalized):
-        return ""
-    for model, generation, reason in _HP_CLEAR_ONLY_EXCEPTION_MODELS:
+    words = normalized.split()
+    for vendor_tokens, family, model_tokens, reason in _CLEAR_ONLY_EXCEPTION_MODELS:
         if (
-            re.search(rf"\b{re.escape(model)}\b", normalized) is not None
-            and re.search(rf"\b{re.escape(generation)}\b", normalized) is not None
+            any(token in words or token in compact for token in vendor_tokens)
+            and family in normalized
+            and all(re.search(rf"\b{re.escape(token)}\b", normalized) is not None for token in model_tokens)
         ):
             return reason
     return ""
@@ -1255,7 +1256,7 @@ def run_secure_erase(
     tried: list[str] = []
     clear_only_exception = False
     clear_only_exception_reason = ""
-    hp_clear_exception_reason = _hp_elitebook_clear_exception_reason()
+    clear_exception_reason = _clear_only_exception_reason()
 
     if dtype == "NVMe":
         release_ev = _release_block_device(device)
@@ -1274,14 +1275,14 @@ def run_secure_erase(
             )
             evidence_blocks.append("[NVMe Clear assist]\n" + clear_ev)
             if clear_ok:
-                if hp_clear_exception_reason:
+                if clear_exception_reason:
                     ok = True
                     method = clear_method
                     clear_only_exception = True
-                    clear_only_exception_reason = hp_clear_exception_reason
+                    clear_only_exception_reason = clear_exception_reason
                     evidence_blocks.append(
                         f"Clear assist completed using {clear_method}; final NVMe "
-                        f"Purge retry skipped by {hp_clear_exception_reason}."
+                        f"Purge retry skipped by {clear_exception_reason}."
                     )
                 else:
                     evidence_blocks.append(
@@ -1318,14 +1319,14 @@ def run_secure_erase(
             clear_ok, clear_method, clear_ev = _run_sata_clear_assist(device)
             evidence_blocks.append("[SATA SSD Clear assist]\n" + clear_ev)
             if clear_ok:
-                if hp_clear_exception_reason:
+                if clear_exception_reason:
                     ok = True
                     method = clear_method
                     clear_only_exception = True
-                    clear_only_exception_reason = hp_clear_exception_reason
+                    clear_only_exception_reason = clear_exception_reason
                     evidence_blocks.append(
                         f"Clear assist completed using {clear_method}; final SATA "
-                        f"SSD Purge retry skipped by {hp_clear_exception_reason}."
+                        f"SSD Purge retry skipped by {clear_exception_reason}."
                     )
                 else:
                     evidence_blocks.append(

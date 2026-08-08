@@ -74,6 +74,8 @@ _CLEAR_ONLY_EXCEPTION_MODELS = (
     (("hp", "hewlettpackard"), "elitebook", ("850", "g5"), "temporary HP EliteBook 850 G5 clear-only policy"),
     (("hp", "hewlettpackard"), "elitebook", ("850", "g6"), "temporary HP EliteBook 850 G6 clear-only policy"),
     (("dell",), "latitude", ("5520",), "temporary Dell Latitude 5520 clear-only policy"),
+    (("lenovo",), "x1 carbon", ("gen", "8"), "temporary Lenovo ThinkPad X1 Carbon 8th Gen clear-only policy"),
+    (("lenovo",), "x1 carbon", ("8th",), "temporary Lenovo ThinkPad X1 Carbon 8th Gen clear-only policy"),
 )
 _NVME_SANITIZE_ACTION_LABELS = {
     2: "NVMe_SANITIZE_BLOCK_ERASE",

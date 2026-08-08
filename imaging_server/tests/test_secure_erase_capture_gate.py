@@ -502,6 +502,43 @@ def test_dell_latitude_5520_can_complete_with_clear_without_final_purge_retry():
     software_zero.assert_not_called()
 
 
+def test_lenovo_x1_carbon_8th_gen_can_complete_with_clear_without_final_purge_retry():
+    with (
+        mock.patch.object(
+            erase,
+            "_system_dmi_profile",
+            return_value="LENOVO | ThinkPad X1 Carbon Gen 8",
+        ),
+        mock.patch.object(erase, "_release_block_device", return_value="released"),
+        mock.patch.object(erase, "_nvme_sanitize_actions", return_value=([], "sanicap=0x00000000")),
+        mock.patch.object(erase, "_nvme_format_crypto", return_value=(False, "NVMe_FORMAT_CRYPTO", "crypto rejected")),
+        mock.patch.object(
+            erase,
+            "_nvme_format_user_data",
+            return_value=(True, "NVMe_FORMAT_USER_DATA", "clear format completed"),
+        ) as user_data_format,
+        mock.patch.object(erase, "_nvme_sanitize") as sanitize,
+        mock.patch.object(erase, "_nvme_secure_discard_clear") as secure_discard,
+        mock.patch.object(erase, "_software_zero_clear") as software_zero,
+        mock.patch.object(erase, "_verify_wipe_sample", return_value=(True, "sample clear")),
+    ):
+        result = erase.run_secure_erase(_drive())
+
+    assert result["ok"]
+    assert result["method"] == "NVMe_FORMAT_USER_DATA"
+    assert result["standard"] == "NIST SP 800-88 Clear"
+    assert result["clear_only_exception"] is True
+    assert "temporary Lenovo ThinkPad X1 Carbon 8th Gen clear-only policy" in result["clear_only_exception_reason"]
+    assert "Purge retry skipped by temporary Lenovo ThinkPad X1 Carbon 8th Gen" in result["evidence"]
+    assert "temporary Lenovo ThinkPad X1 Carbon 8th Gen" in erase._clear_only_exception_reason(
+        "LENOVO | ThinkPad X1 Carbon 8th Gen"
+    )
+    user_data_format.assert_called_once()
+    sanitize.assert_not_called()
+    secure_discard.assert_not_called()
+    software_zero.assert_not_called()
+
+
 def test_nvme_format_retries_controller_namespace_variant():
     calls = []
 
@@ -778,6 +815,7 @@ def test_clear_class_methods_are_certificate_mapped_only_for_model_exception():
     assert "temporary HP EliteBook 850 G5 clear-only policy" in TUI
     assert "temporary HP EliteBook 850 G6 clear-only policy" in TUI
     assert "temporary Dell Latitude 5520 clear-only policy" in TUI
+    assert "temporary Lenovo ThinkPad X1 Carbon 8th Gen clear-only policy" in TUI
     assert "Unsupported data sanitization method" in TUI
     assert "Clear-class and unknown wipe methods are disabled" in TUI
     assert "def _is_certifiable_wipe_method(" in TUI
@@ -1042,6 +1080,7 @@ def test_legacy_shell_client_requires_final_purge_after_clear_assist():
     assert 'MODEL_CLEAR_ONLY_LABEL="HP EliteBook 850 G5"' in wipe_block
     assert 'MODEL_CLEAR_ONLY_LABEL="HP EliteBook 850 G6"' in wipe_block
     assert 'MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5520"' in wipe_block
+    assert 'MODEL_CLEAR_ONLY_LABEL="Lenovo ThinkPad X1 Carbon 8th Gen"' in wipe_block
     assert "temporary clear-only policy allows completion" in wipe_block
     assert "final NVMe Purge retry failed after Clear assist" in wipe_block
     assert "final ATA Purge retry failed after Clear assist" in wipe_block

@@ -472,6 +472,12 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
         && echo "$DMI_PROFILE" | grep -Eiq '\b5520\b'; then
         MODEL_CLEAR_ONLY_EXCEPTION=1
         MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5520"
+    elif echo "$DMI_PROFILE" | grep -Eiq 'lenovo' \
+        && echo "$DMI_PROFILE" | grep -Eiq 'x1' \
+        && echo "$DMI_PROFILE" | grep -Eiq 'carbon' \
+        && echo "$DMI_PROFILE" | grep -Eiq '(\bgen[[:space:]]*8\b|\b8th\b)'; then
+        MODEL_CLEAR_ONLY_EXCEPTION=1
+        MODEL_CLEAR_ONLY_LABEL="Lenovo ThinkPad X1 Carbon 8th Gen"
     fi
     WIPE_STANDARD="NIST 800-88 Purge"
     if [[ "$PRIMARY_DISK" =~ nvme ]]; then

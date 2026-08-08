@@ -60,6 +60,7 @@ function vstl_clear_only_exception_reason(array $payload): string {
     $models = [
         [['hp', 'hewlettpackard'], 'elitebook', ['640', 'g10'], 'temporary HP EliteBook 640 G10 clear-only policy'],
         [['hp', 'hewlettpackard'], 'elitebook', ['850', 'g5'], 'temporary HP EliteBook 850 G5 clear-only policy'],
+        [['hp', 'hewlettpackard'], 'elitebook', ['850', 'g6'], 'temporary HP EliteBook 850 G6 clear-only policy'],
         [['dell'], 'latitude', ['5520'], 'temporary Dell Latitude 5520 clear-only policy'],
     ];
     foreach ($models as $rule) {

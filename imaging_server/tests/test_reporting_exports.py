@@ -344,6 +344,7 @@ def test_reporting_ingest_backfills_certificate_for_successful_erase_audits():
     assert "function vstl_clear_exception_allowed" in INGEST_PHP
     assert "vstl_clear_only_exception_reason" in INGEST_PHP
     assert "temporary HP EliteBook 850 G5 clear-only policy" in INGEST_PHP
+    assert "temporary HP EliteBook 850 G6 clear-only policy" in INGEST_PHP
     assert "temporary Dell Latitude 5520 clear-only policy" in INGEST_PHP
     assert "clear_only_exception" in INGEST_PHP
     assert "function vstl_is_certifiable_wipe_method" in INGEST_PHP

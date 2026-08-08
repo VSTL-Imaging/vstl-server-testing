@@ -461,6 +461,12 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
         && echo "$DMI_PROFILE" | grep -Eiq '\bg5\b'; then
         MODEL_CLEAR_ONLY_EXCEPTION=1
         MODEL_CLEAR_ONLY_LABEL="HP EliteBook 850 G5"
+    elif echo "$DMI_PROFILE" | grep -Eiq 'hp|hewlett' \
+        && echo "$DMI_PROFILE" | grep -Eiq 'elitebook' \
+        && echo "$DMI_PROFILE" | grep -Eiq '\b850\b' \
+        && echo "$DMI_PROFILE" | grep -Eiq '\bg6\b'; then
+        MODEL_CLEAR_ONLY_EXCEPTION=1
+        MODEL_CLEAR_ONLY_LABEL="HP EliteBook 850 G6"
     elif echo "$DMI_PROFILE" | grep -Eiq 'dell' \
         && echo "$DMI_PROFILE" | grep -Eiq 'latitude' \
         && echo "$DMI_PROFILE" | grep -Eiq '\b5520\b'; then

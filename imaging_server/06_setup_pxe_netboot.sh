@@ -361,7 +361,7 @@ if parts is not None:
                     "\t# itself limits bypass to Intel 8086:15d7 and does not write NVM.\n"
                     "\tmodprobe -r e1000e 2>/dev/null || true\n"
                     "\tmodprobe e1000e allow_bad_nvm=1 2>/dev/null || modprobe e1000e 2>/dev/null || true\n"
-                    "\tfor module in igb igc r8169 r8152 r8153_ecm usbnet cdc_ether cdc_eem cdc_ncm cdc_mbim ax88179_178a asix aqc111 thunderbolt_net tg3 bnx2 bnx2x alx atl1c sky2 forcedeth\n"
+                    "\tfor module in igb igc r8169 r8152 r8153_ecm usbnet cdc_ether cdc_eem cdc_ncm cdc_mbim ax88179_178a asix aqc111 lan78xx smsc75xx smsc95xx rtl8150 dm9601 sr9700 mcs7830 cdc_subset thunderbolt_net tg3 bnx2 bnx2x alx atl1c sky2 forcedeth\n"
                     "\tdo\n"
                     "\t\tmodprobe -q \"$module\" 2>/dev/null || true\n"
                     "\tdone\n"
@@ -578,7 +578,7 @@ Vstl_rebind_known_usb_network_drivers ()
 	# there is no /sys/class/net path to reset. Rebind all attached USB-network
 	# drivers, then retrigger USB and net uevents.
 	reset_count=0
-	for driver_name in r8152 r8153_ecm cdc_ether cdc_eem cdc_ncm cdc_mbim ax88179_178a asix aqc111
+	for driver_name in r8152 r8153_ecm cdc_ether cdc_eem cdc_ncm cdc_mbim ax88179_178a asix aqc111 lan78xx smsc75xx smsc95xx rtl8150 dm9601 sr9700 mcs7830 cdc_subset
 	do
 		driver_path="/sys/bus/usb/drivers/$driver_name"
 		[ -d "$driver_path" ] || continue
@@ -593,7 +593,7 @@ Vstl_rebind_known_usb_network_drivers ()
 			reset_count=$((reset_count + 1))
 		done
 	done
-	for module in r8152 r8153_ecm cdc_ether cdc_eem cdc_ncm cdc_mbim ax88179_178a asix aqc111 usbnet
+	for module in r8152 r8153_ecm cdc_ether cdc_eem cdc_ncm cdc_mbim ax88179_178a asix aqc111 lan78xx smsc75xx smsc95xx rtl8150 dm9601 sr9700 mcs7830 cdc_subset usbnet
 	do
 		modprobe -q "$module" 2>/dev/null || true
 	done
@@ -743,6 +743,16 @@ Wait_for_carrier ()
                     "\t\t\t\t\tmodprobe -q ax88179_178a 2>/dev/null || true\n"
                     "\t\t\t\t\tudevadm trigger --subsystem-match=net --action=add 2>/dev/null || true\n"
                     "\t\t\t\t\tudevadm settle --timeout=2 2>/dev/null || true\n"
+                    "\t\t\t\t\tcase \"$step\" in\n"
+                    "\t\t\t\t\t\t5|15|30|60)\n"
+                    "\t\t\t\t\t\t\tVstl_rebind_known_usb_network_drivers\n"
+                    "\t\t\t\t\t\t\t;;\n"
+                    "\t\t\t\t\tesac\n"
+                    "\t\t\t\t\tif [ -z \"$DEVICE\" ] && [ \"$step\" -ge 8 ]\n"
+                    "\t\t\t\t\tthen\n"
+                    "\t\t\t\t\t\tDEVICE=$(Vstl_connected_interface \"$VSTL_TARGET_MAC\" 2>/dev/null || true)\n"
+                    "\t\t\t\t\t\t[ -n \"$DEVICE\" ] && echo \"VSTL: selected connected wired NIC $DEVICE while live-netdev=$VSTL_LIVENETDEV was delayed\"\n"
+                    "\t\t\t\t\tfi\n"
                     "\t\t\t\t\tsleep 1\n"
                     "\t\t\t\tdone\n"
                     "\t\t\t\t;;\n"

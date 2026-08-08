@@ -171,10 +171,25 @@ def test_wired_start_primes_common_typec_ethernet_driver_stack():
         "ax88179_178a",
         "aqc111",
         "thunderbolt_net",
+        "lan78xx",
+        "smsc95xx",
+        "mcs7830",
+        "cdc_subset",
     ):
         assert f'"{module}"' in source
     assert "wait_for_wired_interfaces" in source
     assert "PXE boot adapter MAC" in source
+
+
+def test_typec_dhcp_recovery_resets_usb_adapter_and_stale_clients():
+    source = NETWORK_PATH.read_text(encoding="utf-8")
+    assert "def recover_usb_typec_interface(" in source
+    assert "rebind_interface_driver(interface)" in source
+    assert "rebind_usb_network_drivers()" in source
+    assert 'run(["dhclient", "-4", "-r", current_interface]' in source
+    assert 'run(["dhcpcd", "-k", current_interface]' in source
+    assert 'run(["ip", "addr", "flush", "dev", current_interface]' in source
+    assert 'result = run(["dhclient", "-4", "-1", "-v", current_interface], timeout=45)' in source
 
 
 def test_network_helper_marks_and_claims_dhcp_lease_for_completion_release():
@@ -182,8 +197,8 @@ def test_network_helper_marks_and_claims_dhcp_lease_for_completion_release():
     assert "DHCP_RELEASE_IFACE_FILE" in source
     assert "def record_dhcp_release_interface(" in source
     assert "def claim_existing_dhcp_lease(" in source
-    assert "record_dhcp_release_interface(interface)" in source
-    assert "claim_existing_dhcp_lease(interface)" in source
+    assert "record_dhcp_release_interface(current_interface)" in source
+    assert "claim_existing_dhcp_lease(current_interface)" in source
     assert '"VSTL_DHCP_CLAIM_EXISTING_LEASE"' in source
 
 

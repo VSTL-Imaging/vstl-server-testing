@@ -40,11 +40,38 @@ WIRED_DRIVER_MODULES = (
     "ax88179_178a",
     "asix",
     "aqc111",
+    "lan78xx",
+    "smsc75xx",
+    "smsc95xx",
+    "rtl8150",
+    "dm9601",
+    "sr9700",
+    "mcs7830",
+    "cdc_subset",
     "thunderbolt_net",
     "igb",
     "igc",
     "e1000e",
     "r8169",
+)
+USB_NETWORK_DRIVERS = (
+    "r8152",
+    "r8153_ecm",
+    "cdc_ether",
+    "cdc_eem",
+    "cdc_ncm",
+    "cdc_mbim",
+    "ax88179_178a",
+    "asix",
+    "aqc111",
+    "lan78xx",
+    "smsc75xx",
+    "smsc95xx",
+    "rtl8150",
+    "dm9601",
+    "sr9700",
+    "mcs7830",
+    "cdc_subset",
 )
 
 
@@ -267,6 +294,96 @@ def is_usb_or_typec_interface(interface: str, sys_class_net: Path = SYS_CLASS_NE
     return "/usb" in text or "thunderbolt" in text or "typec" in text
 
 
+def interface_for_mac(
+    mac: str,
+    preferred: str = "",
+    sys_class_net: Path = SYS_CLASS_NET,
+) -> str:
+    target = normalize_mac(mac)
+    if not target:
+        return ""
+    candidates = wired_interfaces(sys_class_net)
+    if preferred in candidates:
+        candidates.remove(preferred)
+        candidates.insert(0, preferred)
+    for candidate in candidates:
+        if interface_mac(candidate, sys_class_net) == target:
+            return candidate
+    return ""
+
+
+def wait_for_interface_by_mac(
+    mac: str,
+    preferred: str = "",
+    seconds: int = 18,
+    sys_class_net: Path = SYS_CLASS_NET,
+) -> str:
+    deadline = time.monotonic() + max(1, seconds)
+    while time.monotonic() <= deadline:
+        match = interface_for_mac(mac, preferred, sys_class_net)
+        if match:
+            return match
+        prime_wired_drivers()
+        time.sleep(1)
+    return interface_for_mac(mac, preferred, sys_class_net)
+
+
+def rebind_interface_driver(interface: str, sys_class_net: Path = SYS_CLASS_NET) -> bool:
+    try:
+        device_path = (sys_class_net / interface / "device").resolve()
+        driver_path = (device_path / "driver").resolve()
+    except OSError:
+        return False
+    if not (driver_path / "unbind").exists() or not (driver_path / "bind").exists():
+        return False
+    device_id = device_path.name
+    run(["ip", "link", "set", interface, "down"], timeout=5)
+    try:
+        (driver_path / "unbind").write_text(device_id, encoding="ascii")
+        time.sleep(1)
+        (driver_path / "bind").write_text(device_id, encoding="ascii")
+    except OSError:
+        return False
+    run(["udevadm", "trigger", "--subsystem-match=net", "--action=add"], timeout=5)
+    run(["udevadm", "settle", "--timeout=10"], timeout=11)
+    return True
+
+
+def rebind_usb_network_drivers() -> int:
+    rebound = 0
+    for driver in USB_NETWORK_DRIVERS:
+        driver_path = Path("/sys/bus/usb/drivers") / driver
+        if not driver_path.is_dir():
+            continue
+        for bound in sorted(driver_path.glob("*:*")):
+            if not bound.is_symlink():
+                continue
+            bound_id = bound.name
+            try:
+                (driver_path / "unbind").write_text(bound_id, encoding="ascii")
+                time.sleep(1)
+                (driver_path / "bind").write_text(bound_id, encoding="ascii")
+                rebound += 1
+            except OSError:
+                continue
+    if rebound:
+        run(["udevadm", "trigger", "--subsystem-match=usb", "--action=add"], timeout=5)
+        run(["udevadm", "trigger", "--subsystem-match=net", "--action=add"], timeout=5)
+        run(["udevadm", "settle", "--timeout=10"], timeout=11)
+    return rebound
+
+
+def recover_usb_typec_interface(interface: str) -> str:
+    """Reset a firmware-owned USB-C NIC and return its current Linux name."""
+    mac = interface_mac(interface)
+    if not mac:
+        rebind_usb_network_drivers()
+        return interface
+    rebind_interface_driver(interface)
+    rebind_usb_network_drivers()
+    return wait_for_interface_by_mac(mac, preferred=interface) or interface
+
+
 def prime_wired_drivers() -> None:
     for module in WIRED_DRIVER_MODULES:
         run(["modprobe", "-q", module], timeout=5)
@@ -330,35 +447,44 @@ def ordered_wired_interfaces(
 
 
 def request_dhcp(interface: str) -> bool:
+    current_interface = interface
     for attempt in range(1, WIRED_DHCP_ATTEMPTS + 1):
         prime_wired_drivers()
-        run(["ip", "link", "set", interface, "up"], timeout=5)
-        wait_for_link(interface)
-        if interface_has_ipv4(interface):
-            record_dhcp_release_interface(interface)
-            claim_existing_dhcp_lease(interface)
+        if is_usb_or_typec_interface(current_interface) and attempt in {1, 2}:
+            recovered = recover_usb_typec_interface(current_interface)
+            if recovered != current_interface:
+                print(f"USB-C Ethernet adapter moved from {current_interface} to {recovered}.")
+                current_interface = recovered
+        run(["ip", "link", "set", current_interface, "up"], timeout=5)
+        wait_for_link(current_interface)
+        if interface_has_ipv4(current_interface):
+            record_dhcp_release_interface(current_interface)
+            claim_existing_dhcp_lease(current_interface)
             return True
+        run(["ip", "addr", "flush", "dev", current_interface], timeout=5)
 
         if run(["sh", "-c", "command -v dhclient"], timeout=3).returncode == 0:
-            result = run(["dhclient", "-4", "-1", "-v", interface], timeout=35)
-            if result.returncode == 0 and interface_has_ipv4(interface):
-                record_dhcp_release_interface(interface)
+            run(["dhclient", "-4", "-r", current_interface], timeout=8)
+            result = run(["dhclient", "-4", "-1", "-v", current_interface], timeout=45)
+            if result.returncode == 0 and interface_has_ipv4(current_interface):
+                record_dhcp_release_interface(current_interface)
                 return True
 
         if run(["sh", "-c", "command -v dhcpcd"], timeout=3).returncode == 0:
-            result = run(["dhcpcd", "-4", "-1", interface], timeout=35)
-            if result.returncode == 0 and interface_has_ipv4(interface):
-                record_dhcp_release_interface(interface)
+            run(["dhcpcd", "-k", current_interface], timeout=8)
+            result = run(["dhcpcd", "-4", "-1", current_interface], timeout=45)
+            if result.returncode == 0 and interface_has_ipv4(current_interface):
+                record_dhcp_release_interface(current_interface)
                 return True
 
         if run(["sh", "-c", "command -v udhcpc"], timeout=3).returncode == 0:
-            result = run(["udhcpc", "-q", "-t", "5", "-T", "5", "-i", interface], timeout=35)
-            if result.returncode == 0 and interface_has_ipv4(interface):
-                record_dhcp_release_interface(interface)
+            result = run(["udhcpc", "-q", "-t", "7", "-T", "5", "-i", current_interface], timeout=45)
+            if result.returncode == 0 and interface_has_ipv4(current_interface):
+                record_dhcp_release_interface(current_interface)
                 return True
 
         if attempt < WIRED_DHCP_ATTEMPTS:
-            print(f"Retrying DHCP on {interface} ({attempt}/{WIRED_DHCP_ATTEMPTS})...")
+            print(f"Retrying DHCP on {current_interface} ({attempt}/{WIRED_DHCP_ATTEMPTS})...")
             time.sleep(2)
 
     return False

@@ -226,6 +226,19 @@ def test_typec_ethernet_pxe_resolves_boot_mac_after_usb_module_settle():
     assert 'VSTL: selected PXE NIC $DEVICE from live-netdev=$VSTL_LIVENETDEV' in SCRIPT
 
 
+def test_typec_ethernet_resolver_rebinds_usb_nics_before_fallback():
+    """HP/Lenovo USB-C PXE can fetch initrd, then Linux sees no IPv4 NIC."""
+    assert "Vstl_rebind_known_usb_network_drivers" in SCRIPT
+    assert '5|15|30|60)' in SCRIPT
+    assert 'DEVICE=$(Vstl_connected_interface \\"$VSTL_TARGET_MAC\\"' in SCRIPT
+    assert "selected connected wired NIC $DEVICE while live-netdev=$VSTL_LIVENETDEV was delayed" in SCRIPT
+
+
+def test_typec_ethernet_driver_stack_covers_common_usb_adapters():
+    for module in ("lan78xx", "smsc75xx", "smsc95xx", "rtl8150", "dm9601", "mcs7830", "cdc_subset"):
+        assert module in SCRIPT
+
+
 def test_typec_ethernet_carrier_wait_uses_configured_timeout_not_fixed_15s():
     assert "VSTL carrier timeout extension" in SCRIPT
     assert 'carrier_wait="${ETHDEV_TIMEOUT:-120}"' in SCRIPT

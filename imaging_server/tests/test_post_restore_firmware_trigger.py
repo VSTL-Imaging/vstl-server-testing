@@ -127,7 +127,7 @@ def test_successful_restore_fails_when_partition_layout_is_not_verified(monkeypa
     monkeypatch.setattr(ir, "_NFS_MOUNT_POINT", str(tmp_path))
     monkeypatch.setattr(ir.os.path, "isdir", lambda path: True)
     monkeypatch.setattr(ir, "_ocs_restoredisk", lambda *args, **kwargs: (True, "restore ok"))
-    monkeypatch.setattr(ir, "_verify_restore", lambda device: (False, "too much unallocated space"))
+    monkeypatch.setattr(ir, "_verify_restore", lambda device, *args, **kwargs: (False, "too much unallocated space"))
 
     result = ir.run_restore("image", "/dev/sda", "10.255.0.75", "/images/dev")
 
@@ -180,7 +180,7 @@ def test_successful_restore_reports_firmware_trigger(monkeypatch, tmp_path):
     monkeypatch.setattr(ir, "_NFS_MOUNT_POINT", str(tmp_path))
     monkeypatch.setattr(ir.os.path, "isdir", lambda path: True)
     monkeypatch.setattr(ir, "_ocs_restoredisk", lambda *args, **kwargs: (True, "restore ok"))
-    monkeypatch.setattr(ir, "_verify_restore", lambda device: (True, "lsblk ok"))
+    monkeypatch.setattr(ir, "_verify_restore", lambda device, *args, **kwargs: (True, "lsblk ok"))
     monkeypatch.setattr(
         ir,
         "install_post_restore_firmware_trigger",

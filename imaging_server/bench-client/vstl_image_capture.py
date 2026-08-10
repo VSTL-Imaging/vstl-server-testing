@@ -1256,11 +1256,12 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
         # partclone prints this when its per-partition worker exits normally;
         # Clonezilla's final process return code decides restore/capture success.
         current = state.get("current_partition")
+        parts = state.get("parts") or []
         try:
             part_pct = float(state.get("partition_percent") or 0.0)
         except (TypeError, ValueError):
             part_pct = 0.0
-        if current and part_pct >= 99.0:
+        if current and (not parts or current in parts) and part_pct >= 99.0:
             completed = state.setdefault("completed_partitions", [])
             if current not in completed:
                 completed.append(current)
@@ -1304,6 +1305,27 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
         state["phase"] = f"{op} {part}"
         return
 
+    m = re.search(
+        r"Starting to restore image\s+\([^)]+\)\s+to device\s+\((/dev/[^)]+)\)",
+        clean,
+        re.IGNORECASE,
+    )
+    if not m:
+        m = re.search(
+            r"Starting to clone/restore\s+\([^)]+\)\s+to\s+\((/dev/[^)]+)\)",
+            clean,
+            re.IGNORECASE,
+        )
+    if m:
+        part = os.path.basename(m.group(1))
+        state["current_partition"] = part
+        parts = state.get("parts") or []
+        if part in parts:
+            state["partition_index"] = parts.index(part) + 1
+        state["partition_percent"] = 0.0
+        state["phase"] = f"{op} {part}"
+        return
+
     m = re.search(r"Finished (?:saving|restoring)\s+(/dev/\S+)\s+as", clean)
     if m:
         part = os.path.basename(m.group(1))
@@ -1315,6 +1337,24 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
         state["parts_left"] = max(total - len(completed), 0) if total else None
         state["partition_percent"] = 100.0
         state["phase"] = f"finished {part}"
+        return
+
+    m = re.search(
+        r"Partclone successfully .*? to (?:the )?(?:device )?\((/dev/[^)]+)\)",
+        clean,
+        re.IGNORECASE,
+    )
+    if m:
+        part = os.path.basename(m.group(1))
+        completed = state.setdefault("completed_partitions", [])
+        if part not in completed:
+            completed.append(part)
+        state["parts_done"] = len(completed)
+        total = state.get("parts_total") or len(state.get("parts") or [])
+        state["parts_left"] = max(total - len(completed), 0) if total else None
+        state["partition_percent"] = 100.0
+        state["phase"] = f"finished {part}"
+        state["last_line"] = f"Finished {part}; preparing next partition"
         return
 
     m = re.search(r"/dev/(\S+)\s+filesystem:\s*([A-Za-z0-9_+\-.]+)", clean)
@@ -1393,11 +1433,15 @@ def _emit_capture_progress(progress_callback: Optional[Callable[[dict], None]],
     if parts:
         state["parts"] = parts
         state["parts_total"] = len(parts)
-    newest = _newest_part_from_image_dir(image_dir)
-    if newest and not state.get("current_partition"):
-        state["current_partition"] = newest
-    if newest and state.get("parts") and newest in state["parts"]:
-        state.setdefault("partition_index", state["parts"].index(newest) + 1)
+    newest = ""
+    if state.get("operation") != "restoring":
+        newest = _newest_part_from_image_dir(image_dir)
+        if newest and state.get("parts") and newest not in state["parts"]:
+            newest = ""
+        if newest and not state.get("current_partition"):
+            state["current_partition"] = newest
+        if newest and state.get("parts") and newest in state["parts"]:
+            state.setdefault("partition_index", state["parts"].index(newest) + 1)
 
     total = state.get("parts_total") or len(state.get("parts") or [])
     done = len(state.get("completed_partitions") or [])

@@ -390,6 +390,19 @@ def _restore_failure_summary(evidence: str) -> str:
     return " | ".join(lines[-2:])[:180]
 
 
+def _emit_restore_stage(progress_callback: Optional[Callable[[dict], None]],
+                        message: str) -> None:
+    if not progress_callback:
+        return
+    progress_callback({
+        "phase": message,
+        "last_line": message,
+        "partition_eta_sec": None,
+        "partition_eta_text": "--",
+        "network_rate": "--",
+    })
+
+
 _MAX_ALLOWED_TRAILING_FREE_BYTES = 1024 * 1024 * 1024
 _RESTORE_LAYOUT_ALIGN_SECTORS = 2048
 _MAX_RECOVERY_MOVE_BYTES = 4 * 1024 * 1024 * 1024
@@ -507,7 +520,9 @@ def _pick_restore_temp_path(size_bytes: int, partition_number: int) -> tuple[str
     return "", f"no temp space for {size_bytes} byte recovery partition"
 
 
-def _grow_ntfs(partition: str) -> tuple[bool, str]:
+def _grow_ntfs(partition: str,
+               progress_callback: Optional[Callable[[dict], None]] = None) -> tuple[bool, str]:
+    _emit_restore_stage(progress_callback, f"Post-restore: expanding NTFS on {partition}")
     quoted = shlex.quote(partition)
     rc, out, err = _run(
         ["bash", "-lc", f"yes | ntfsresize -f -x {quoted}"],
@@ -516,7 +531,10 @@ def _grow_ntfs(partition: str) -> tuple[bool, str]:
     return rc == 0, f"$ ntfsresize {partition} rc={rc} {out[-500:]} {err[-500:]}"
 
 
-def _expand_restored_windows_layout(device: str) -> tuple[bool, str]:
+def _expand_restored_windows_layout(
+    device: str,
+    progress_callback: Optional[Callable[[dict], None]] = None,
+) -> tuple[bool, str]:
     """Expand restored Windows images so larger target disks do not keep
     trailing unallocated space. Common Clonezilla images restore as:
     EFI, MSR, Windows, Recovery. The recovery partition blocks growing C:,
@@ -524,6 +542,7 @@ def _expand_restored_windows_layout(device: str) -> tuple[bool, str]:
     of the target disk, then grow the Windows NTFS partition.
     """
     evidence: list[str] = []
+    _emit_restore_stage(progress_callback, "Post-restore: checking target disk layout")
     trailing_free, free_ev = _trailing_free_bytes(device)
     evidence.append(free_ev)
     if trailing_free is None:
@@ -567,8 +586,10 @@ def _expand_restored_windows_layout(device: str) -> tuple[bool, str]:
             recovery_entries.append((row, entry))
     recovery_entries.sort(key=lambda item: int(item[1].get("start") or 0))
 
+    _emit_restore_stage(progress_callback, "Post-restore: repairing GPT backup header")
     _run(["sgdisk", "-e", device], timeout=30)
     if not recovery_entries:
+        _emit_restore_stage(progress_callback, "Post-restore: expanding Windows partition")
         new_os_end = last_lba - _RESTORE_LAYOUT_ALIGN_SECTORS
         if new_os_end <= os_end:
             evidence.append("no usable free space after Windows partition")
@@ -586,7 +607,7 @@ def _expand_restored_windows_layout(device: str) -> tuple[bool, str]:
             return False, "\n".join(evidence)
         _run(["partprobe", device], timeout=10)
         _run(["udevadm", "settle"], timeout=10)
-        ntfs_ok, ntfs_ev = _grow_ntfs(os_path)
+        ntfs_ok, ntfs_ev = _grow_ntfs(os_path, progress_callback)
         evidence.append(ntfs_ev)
         if not ntfs_ok:
             return False, "\n".join(evidence)
@@ -615,6 +636,7 @@ def _expand_restored_windows_layout(device: str) -> tuple[bool, str]:
     evidence.append(temp_ev)
     if not temp_path:
         return False, "\n".join(evidence)
+    _emit_restore_stage(progress_callback, f"Post-restore: saving recovery partition {rec_path}")
     rc, out, err = _run(
         ["dd", f"if={rec_path}", f"of={temp_path}", "bs=16M", "status=none"],
         timeout=30 * 60,
@@ -623,6 +645,7 @@ def _expand_restored_windows_layout(device: str) -> tuple[bool, str]:
     if rc != 0:
         return False, "\n".join(evidence)
 
+    _emit_restore_stage(progress_callback, "Post-restore: moving recovery partition to disk end")
     cmd = [
         "sgdisk",
         f"--delete={rec_num}",
@@ -640,6 +663,7 @@ def _expand_restored_windows_layout(device: str) -> tuple[bool, str]:
     _run(["partprobe", device], timeout=10)
     _run(["udevadm", "settle"], timeout=10)
     rec_new_path = _part_path(device, rec_num)
+    _emit_restore_stage(progress_callback, f"Post-restore: restoring recovery partition {rec_new_path}")
     rc, out, err = _run(
         ["dd", f"if={temp_path}", f"of={rec_new_path}", "bs=16M", "conv=fsync", "status=none"],
         timeout=30 * 60,
@@ -651,17 +675,21 @@ def _expand_restored_windows_layout(device: str) -> tuple[bool, str]:
         pass
     if rc != 0:
         return False, "\n".join(evidence)
-    ntfs_ok, ntfs_ev = _grow_ntfs(os_path)
+    ntfs_ok, ntfs_ev = _grow_ntfs(os_path, progress_callback)
     evidence.append(ntfs_ev)
     if not ntfs_ok:
         return False, "\n".join(evidence)
+    _emit_restore_stage(progress_callback, "Post-restore: finalizing partition table")
     _run(["sgdisk", "-e", device], timeout=30)
     _run(["partprobe", device], timeout=10)
     _run(["udevadm", "settle"], timeout=10)
     return True, "\n".join(evidence)
 
 
-def _verify_restore(device: str) -> tuple[bool, str]:
+def _verify_restore(
+    device: str,
+    progress_callback: Optional[Callable[[dict], None]] = None,
+) -> tuple[bool, str]:
     """Run ``partprobe`` + ``lsblk`` after the restore and confirm a fresh
     partition table is visible. This isn't cryptographic verification â€”
     Clonezilla's own partclone phase verifies block hashes â€” but it gives
@@ -669,6 +697,7 @@ def _verify_restore(device: str) -> tuple[bool, str]:
     """
     # A smaller GPT image restored to a larger drive can leave the backup GPT
     # header at the old end of disk. Repair that before checking usable space.
+    _emit_restore_stage(progress_callback, "Post-restore: verifying restored partitions")
     _run(["sgdisk", "-e", device], timeout=30)
     _run(["partprobe", device], timeout=10)
     _run(["udevadm", "settle"], timeout=10)
@@ -683,7 +712,7 @@ def _verify_restore(device: str) -> tuple[bool, str]:
         evidence.append("no restored partitions detected")
         return False, "\n".join(evidence)
 
-    expanded, expand_ev = _expand_restored_windows_layout(device)
+    expanded, expand_ev = _expand_restored_windows_layout(device, progress_callback)
     evidence.append("$ post-restore layout expansion")
     evidence.append(expand_ev)
     if expanded:
@@ -707,6 +736,7 @@ def _verify_restore(device: str) -> tuple[bool, str]:
             "destination layout was not expanded to disk size"
         )
         return False, "\n".join(evidence)[:2000]
+    _emit_restore_stage(progress_callback, "Post-restore: verification complete")
     return True, "\n".join(evidence)[:2000]
 
 
@@ -1008,7 +1038,8 @@ def run_restore(
             "error_message": error_message,
         }
 
-    verified, verify_ev = _verify_restore(device)
+    _emit_restore_stage(progress_callback, "Clonezilla finished; verifying restored disk")
+    verified, verify_ev = _verify_restore(device, progress_callback)
     restore_ok = bool(verified)
     firmware_trigger = (
         install_post_restore_firmware_trigger(device)

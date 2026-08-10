@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import time
 from pathlib import Path
 
 
@@ -43,3 +44,56 @@ def test_restore_runner_keeps_clonezilla_stdin_normal():
 
     assert "stdin=subprocess.PIPE" not in source
     assert "sent newline after partclone completion" not in source
+
+
+def test_restore_does_not_count_metadata_file_as_partition():
+    state = {
+        "operation": "restoring",
+        "phase": "restoring",
+        "current_partition": "Info-img-id",
+        "parts": ["nvme0n1p1", "nvme0n1p2", "nvme0n1p3", "nvme0n1p4"],
+        "parts_total": 4,
+        "partition_percent": 100.0,
+    }
+
+    capture._update_capture_state_from_line("Program terminated.", state)
+
+    assert state.get("parts_done") in (None, 0)
+    assert state.get("completed_partitions") in (None, [])
+    assert state["last_line"] == "Partition tool completed"
+
+
+def test_restore_progress_does_not_infer_current_part_from_metadata(tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "parts").write_text("nvme0n1p1 nvme0n1p2\n", encoding="utf-8")
+    (image_dir / "Info-img-id.txt").write_text("metadata\n", encoding="utf-8")
+    state = {
+        "operation": "restoring",
+        "image_dir": str(image_dir),
+        "completed_partitions": [],
+    }
+    events = []
+
+    capture._emit_capture_progress(events.append, state, time.monotonic(), str(image_dir), {})
+
+    assert events
+    assert events[-1].get("current_partition") in (None, "")
+    assert events[-1]["parts_total"] == 2
+
+
+def test_restore_specific_partclone_line_sets_current_partition():
+    state = {
+        "operation": "restoring",
+        "parts": ["nvme0n1p1", "nvme0n1p2"],
+        "parts_total": 2,
+    }
+
+    capture._update_capture_state_from_line(
+        "Starting to restore image (-) to device (/dev/nvme0n1p2)",
+        state,
+    )
+
+    assert state["current_partition"] == "nvme0n1p2"
+    assert state["partition_index"] == 2
+    assert state["partition_percent"] == 0.0

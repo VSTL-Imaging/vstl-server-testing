@@ -6,11 +6,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CAPTURE_PATH = ROOT / "bench-client" / "vstl_image_capture.py"
+RESTORE_PATH = ROOT / "bench-client" / "vstl_image_restore.py"
 sys.path.insert(0, str(ROOT / "bench-client"))
 spec = importlib.util.spec_from_file_location("vstl_image_capture_progress", CAPTURE_PATH)
 capture = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(capture)
+restore_spec = importlib.util.spec_from_file_location("vstl_image_restore_progress", RESTORE_PATH)
+restore = importlib.util.module_from_spec(restore_spec)
+assert restore_spec.loader is not None
+restore_spec.loader.exec_module(restore)
 
 
 def test_partclone_program_terminated_line_is_not_treated_as_interruption():
@@ -38,12 +43,26 @@ def test_partclone_program_terminated_line_is_not_treated_as_interruption():
     assert state["write_speed"] == "80 MB/s"
 
 
-def test_restore_runner_keeps_clonezilla_stdin_normal():
-    restore_path = ROOT / "bench-client" / "vstl_image_restore.py"
-    source = restore_path.read_text(encoding="utf-8")
+def test_restore_runner_can_continue_after_confirmed_partclone_completion():
+    state = {
+        "current_partition": "nvme0n1p1",
+        "parts": ["nvme0n1p1", "nvme0n1p2"],
+        "completed_partitions": ["nvme0n1p1"],
+        "last_line": "Finished nvme0n1p1; preparing next partition",
+    }
 
-    assert "stdin=subprocess.PIPE" not in source
-    assert "sent newline after partclone completion" not in source
+    assert restore._should_continue_after_partclone("Program terminated.", state)
+
+
+def test_restore_runner_does_not_continue_after_unknown_partition_completion():
+    state = {
+        "current_partition": "Info-img-id",
+        "parts": ["nvme0n1p1", "nvme0n1p2"],
+        "completed_partitions": [],
+        "last_line": "Partition tool completed",
+    }
+
+    assert not restore._should_continue_after_partclone("Program terminated.", state)
 
 
 def test_restore_does_not_count_metadata_file_as_partition():
@@ -96,4 +115,21 @@ def test_restore_specific_partclone_line_sets_current_partition():
 
     assert state["current_partition"] == "nvme0n1p2"
     assert state["partition_index"] == 2
+    assert state["partition_percent"] == 0.0
+
+
+def test_restore_ptcl_read_batch_line_sets_current_partition():
+    state = {
+        "operation": "restoring",
+        "parts": ["nvme0n1p1", "nvme0n1p2", "nvme0n1p3", "nvme0n1p4"],
+        "parts_total": 4,
+    }
+
+    capture._update_capture_state_from_line(
+        "ptcl-read-batch /home/partimag/example/sys-ptcl-img.gz /dev/nvme0n1p1",
+        state,
+    )
+
+    assert state["current_partition"] == "nvme0n1p1"
+    assert state["partition_index"] == 1
     assert state["partition_percent"] == 0.0

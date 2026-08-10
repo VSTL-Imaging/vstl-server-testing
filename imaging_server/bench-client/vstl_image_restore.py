@@ -61,7 +61,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v3"
+RESTORE_CLIENT_BUILD = "restore-track-v4"
 
 
 def _now_iso() -> str:
@@ -258,6 +258,20 @@ def list_golden_copies(api_base: str, api_key: str) -> list[dict]:
     return body.get("copies", []) or []
 
 
+def _should_continue_after_partclone(line: str, state: dict) -> bool:
+    """Return True when Clonezilla needs Enter after a real partclone pass."""
+    clean = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line or "").strip().lower()
+    if "program terminated" not in clean:
+        return False
+    current = state.get("current_partition") or ""
+    parts = state.get("parts") or []
+    if not current or (parts and current not in parts):
+        return False
+    if current not in (state.get("completed_partitions") or []):
+        return False
+    return (state.get("last_line") or "").startswith(f"Finished {current};")
+
+
 def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
                       progress_callback: Optional[Callable[[dict], None]] = None,
                       timeout: int = 4 * 3600) -> tuple[bool, str]:
@@ -297,6 +311,7 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
     try:
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
@@ -335,6 +350,15 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
                     if len(evidence_lines) > 500:
                         evidence_lines = evidence_lines[-500:]
                     _update_capture_state_from_line(piece, state)
+                    if _should_continue_after_partclone(piece, state) and proc.stdin:
+                        try:
+                            proc.stdin.write(b"\n")
+                            proc.stdin.flush()
+                            evidence_lines.append(
+                                f"sent continue after {state.get('current_partition')}"
+                            )
+                        except (BrokenPipeError, OSError):
+                            pass
             elif proc.poll() is not None:
                 break
 

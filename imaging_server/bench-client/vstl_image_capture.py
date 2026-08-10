@@ -1326,6 +1326,21 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
         state["phase"] = f"{op} {part}"
         return
 
+    m = re.search(r"\bptcl-[^\s]+\b.*\s(/dev/\S+)$", clean, re.IGNORECASE)
+    if m:
+        part = os.path.basename(m.group(1))
+        state["current_partition"] = part
+        parts = state.get("parts") or []
+        if part in parts:
+            state["partition_index"] = parts.index(part) + 1
+        state["partition_percent"] = 0.0
+        state["partition_size"] = "--"
+        state["partition_used"] = "--"
+        state["partition_free"] = "--"
+        state["filesystem"] = "--"
+        state["phase"] = f"{op} {part}"
+        return
+
     m = re.search(r"Finished (?:saving|restoring)\s+(/dev/\S+)\s+as", clean)
     if m:
         part = os.path.basename(m.group(1))

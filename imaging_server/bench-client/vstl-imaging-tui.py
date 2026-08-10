@@ -8365,7 +8365,11 @@ def _draw_restore_progress(stdscr, ident: dict, drive: dict,
              curses.color_pair(CYAN_PAIR), max_value_width=left_value_width)
     match = state.get("match_type") or golden_copy.get("match_type") or ""
     if two_col:
-        _draw_kv(stdscr, y, right, "Match", match.upper() if match else "--",
+        build = getattr(ir, "RESTORE_CLIENT_BUILD", "")
+        match_text = (match.upper() if match else "--")
+        if build:
+            match_text = f"{match_text} / {build}"
+        _draw_kv(stdscr, y, right, "Match", match_text,
                  max_value_width=right_value_width)
     y += 2
 

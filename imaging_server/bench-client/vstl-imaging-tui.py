@@ -8489,6 +8489,7 @@ def screen_run_restore(stdscr, ident: dict, drive: dict,
 def screen_restore_result(stdscr, result: dict, log_ok: bool,
                           reporting_suppressed: bool = False) -> None:
     stdscr.erase()
+    _h, w = stdscr.getmaxyx()
     if result.get("ok"):
         draw_header(stdscr, "Phase 3 - Restore OK")
         top = ("Image restored successfully",
@@ -8501,11 +8502,28 @@ def screen_restore_result(stdscr, result: dict, log_ok: bool,
              (f"Image    : {result.get('image_name','(none)')[:48]}",
               curses.A_BOLD),
              (f"OS       : {_os_display(result.get('os_name',''), result.get('os_version',''), result.get('os_build',''))}",
-              curses.color_pair(CYAN_PAIR)),
+             curses.color_pair(CYAN_PAIR)),
              (f"Duration : {_fmt_duration(result.get('duration_sec',0))}",
               curses.color_pair(DIM_PAIR)),
              (f"Verified : {'YES' if result.get('verified') else 'NO'}",
               curses.color_pair(GREEN_PAIR if result.get('verified') else YELLOW_PAIR))]
+    evidence = str(result.get("evidence") or "")
+    if not result.get("ok") and evidence:
+        interesting = []
+        for raw in evidence.splitlines():
+            line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", raw).strip()
+            lower = line.lower()
+            if line and any(token in lower for token in (
+                "error", "failed", "fail", "cannot", "unable", "no space",
+                "smaller", "target", "source", "broken", "aborted", "rc=",
+            )):
+                interesting.append(line)
+        if not interesting:
+            interesting = [line.strip() for line in evidence.splitlines() if line.strip()][-3:]
+        lines.append(("", 0))
+        for line in interesting[-3:]:
+            lines.append((f"Reason   : {line[: max(24, w - 16)]}",
+                          curses.color_pair(RED_PAIR)))
     if reporting_suppressed:
         lines.append(("", 0))
         lines.append(("Testing mode: restore log was not posted.",

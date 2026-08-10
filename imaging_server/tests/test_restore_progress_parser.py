@@ -37,9 +37,9 @@ def test_partclone_program_terminated_line_is_not_treated_as_interruption():
     assert state["write_speed"] == "80 MB/s"
 
 
-def test_restore_runner_sends_newline_after_partclone_completion():
+def test_restore_runner_keeps_clonezilla_stdin_normal():
     restore_path = ROOT / "bench-client" / "vstl_image_restore.py"
     source = restore_path.read_text(encoding="utf-8")
 
-    assert "stdin=subprocess.PIPE" in source
-    assert "sent newline after partclone completion" in source
+    assert "stdin=subprocess.PIPE" not in source
+    assert "sent newline after partclone completion" not in source

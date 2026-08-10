@@ -296,7 +296,6 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
     try:
         proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
@@ -335,13 +334,6 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
                     if len(evidence_lines) > 500:
                         evidence_lines = evidence_lines[-500:]
                     _update_capture_state_from_line(piece, state)
-                    if "program terminated" in piece.lower() and proc.stdin:
-                        try:
-                            proc.stdin.write(b"\n")
-                            proc.stdin.flush()
-                            evidence_lines.append("sent newline after partclone completion")
-                        except (BrokenPipeError, OSError):
-                            pass
             elif proc.poll() is not None:
                 break
 
@@ -371,6 +363,31 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
         f"\nrc={rc_value}\nelapsed_sec={elapsed}"
     )
     return rc_value == 0, ev
+
+
+def _restore_failure_summary(evidence: str) -> str:
+    wanted = (
+        "error", "failed", "fail", "cannot", "unable", "not found",
+        "no space", "smaller", "target", "source", "broken", "aborted",
+    )
+    lines: list[str] = []
+    for raw in (evidence or "").splitlines():
+        line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", raw).strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if any(token in lower for token in wanted):
+            if line not in lines:
+                lines.append(line)
+    if not lines:
+        for raw in reversed((evidence or "").splitlines()):
+            line = raw.strip()
+            if line and not line.startswith("$ "):
+                lines.append(line)
+            if len(lines) >= 2:
+                break
+        lines.reverse()
+    return " | ".join(lines[-2:])[:180]
 
 
 _MAX_ALLOWED_TRAILING_FREE_BYTES = 1024 * 1024 * 1024
@@ -967,6 +984,10 @@ def run_restore(
     )
     duration = int(time.monotonic() - started_ts)
     if not ok_r:
+        failure_summary = _restore_failure_summary(restore_ev)
+        error_message = "ocs-sr restoredisk failed"
+        if failure_summary:
+            error_message = f"{error_message}: {failure_summary}"
         return {
             "ok": False,
             "result": "FAIL",
@@ -984,7 +1005,7 @@ def run_restore(
             "duration_sec": duration,
             "verified": False,
             "evidence": ("\n---\n".join([mount_ev, restore_ev]))[:_EVIDENCE_CAP],
-            "error_message": "ocs-sr restoredisk failed",
+            "error_message": error_message,
         }
 
     verified, verify_ev = _verify_restore(device)

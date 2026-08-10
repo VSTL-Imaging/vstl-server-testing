@@ -126,10 +126,62 @@ def test_restore_ptcl_read_batch_line_sets_current_partition():
     }
 
     capture._update_capture_state_from_line(
-        "ptcl-read-batch /home/partimag/example/sys-ptcl-img.gz /dev/nvme0n1p1",
+        "ptcl-read-batch /home/partimag/example/sys-ptcl-img.gz /dev/nvme0n1p1 --quiet",
         state,
     )
 
     assert state["current_partition"] == "nvme0n1p1"
     assert state["partition_index"] == 1
     assert state["partition_percent"] == 0.0
+
+
+def test_restore_progress_infers_first_partition_when_start_line_is_missing():
+    state = {
+        "operation": "restoring",
+        "parts": ["nvme0n1p1", "nvme0n1p2", "nvme0n1p3", "nvme0n1p4"],
+        "parts_total": 4,
+    }
+
+    capture._update_capture_state_from_line(
+        "Current Block: 8027694, Total Block: 124762111, Complete: 7.00%",
+        state,
+    )
+
+    assert state["current_partition"] == "nvme0n1p1"
+    assert state["partition_index"] == 1
+    assert state["partition_percent"] == 7.0
+
+
+def test_restore_progress_infers_next_partition_after_previous_completed():
+    state = {
+        "operation": "restoring",
+        "current_partition": "nvme0n1p1",
+        "parts": ["nvme0n1p1", "nvme0n1p2", "nvme0n1p3", "nvme0n1p4"],
+        "parts_total": 4,
+        "completed_partitions": ["nvme0n1p1"],
+        "partition_percent": 100.0,
+    }
+
+    capture._update_capture_state_from_line(
+        "Current Block: 10, Total Block: 1000, Complete: 1.00%",
+        state,
+    )
+
+    assert state["current_partition"] == "nvme0n1p2"
+    assert state["partition_index"] == 2
+    assert state["partition_percent"] == 1.0
+
+
+def test_restore_program_terminated_marks_inferred_partition_complete():
+    state = {
+        "operation": "restoring",
+        "parts": ["nvme0n1p1", "nvme0n1p2"],
+        "parts_total": 2,
+        "partition_percent": 100.0,
+    }
+
+    capture._update_capture_state_from_line("Program terminated.", state)
+
+    assert state["current_partition"] == "nvme0n1p1"
+    assert state["completed_partitions"] == ["nvme0n1p1"]
+    assert state["parts_left"] == 1

@@ -1245,6 +1245,43 @@ def _newest_part_from_image_dir(path: str) -> str:
     return newest_part
 
 
+def _next_unfinished_restore_part(state: dict) -> str:
+    parts = state.get("parts") or []
+    if not parts:
+        return ""
+    completed = set(state.get("completed_partitions") or [])
+    for part in parts:
+        if part not in completed:
+            return part
+    return ""
+
+
+def _set_current_restore_part(state: dict, part: str) -> None:
+    if not part:
+        return
+    state["current_partition"] = part
+    parts = state.get("parts") or []
+    if part in parts:
+        state["partition_index"] = parts.index(part) + 1
+    op = state.get("operation") or "capturing"
+    state["phase"] = f"{op} {part}"
+
+
+def _infer_restore_part_from_progress(state: dict) -> None:
+    if state.get("operation") != "restoring":
+        return
+    parts = state.get("parts") or []
+    if not parts:
+        return
+    current = state.get("current_partition") or ""
+    completed = set(state.get("completed_partitions") or [])
+    if current and current not in parts:
+        return
+    if current and current not in completed:
+        return
+    _set_current_restore_part(state, _next_unfinished_restore_part(state))
+
+
 def _update_capture_state_from_line(line: str, state: dict) -> None:
     clean = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line or "").strip()
     if not clean:
@@ -1261,6 +1298,14 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
             part_pct = float(state.get("partition_percent") or 0.0)
         except (TypeError, ValueError):
             part_pct = 0.0
+        if (
+            state.get("operation") == "restoring"
+            and not current
+            and parts
+            and part_pct >= 99.0
+        ):
+            current = _next_unfinished_restore_part(state)
+            _set_current_restore_part(state, current)
         if current and (not parts or current in parts) and part_pct >= 99.0:
             completed = state.setdefault("completed_partitions", [])
             if current not in completed:
@@ -1326,9 +1371,9 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
         state["phase"] = f"{op} {part}"
         return
 
-    m = re.search(r"\bptcl-[^\s]+\b.*\s(/dev/\S+)$", clean, re.IGNORECASE)
+    m = re.search(r"\bptcl-\S+\b.*?(/dev/[A-Za-z0-9_.+/-]+)", clean, re.IGNORECASE)
     if m:
-        part = os.path.basename(m.group(1))
+        part = os.path.basename(m.group(1).rstrip(".,;:'\")"))
         state["current_partition"] = part
         parts = state.get("parts") or []
         if part in parts:
@@ -1418,6 +1463,7 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
         re.IGNORECASE,
     )
     if m:
+        _infer_restore_part_from_progress(state)
         current = int(m.group(1).replace(",", ""))
         total = max(int(m.group(2).replace(",", "")), 1)
         state["current_block"] = current

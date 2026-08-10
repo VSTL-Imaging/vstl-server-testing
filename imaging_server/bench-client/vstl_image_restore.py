@@ -61,7 +61,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v4"
+RESTORE_CLIENT_BUILD = "restore-track-v5"
 
 
 def _now_iso() -> str:

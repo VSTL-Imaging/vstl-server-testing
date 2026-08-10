@@ -1255,7 +1255,23 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
     if "program terminated" in lower:
         # partclone prints this when its per-partition worker exits normally;
         # Clonezilla's final process return code decides restore/capture success.
-        state["last_line"] = "Partition tool completed"
+        current = state.get("current_partition")
+        try:
+            part_pct = float(state.get("partition_percent") or 0.0)
+        except (TypeError, ValueError):
+            part_pct = 0.0
+        if current and part_pct >= 99.0:
+            completed = state.setdefault("completed_partitions", [])
+            if current not in completed:
+                completed.append(current)
+            total = state.get("parts_total") or len(state.get("parts") or [])
+            state["parts_done"] = len(completed)
+            state["parts_left"] = max(total - len(completed), 0) if total else None
+            state["partition_percent"] = 100.0
+            state["phase"] = f"finished {current}"
+            state["last_line"] = f"Finished {current}; preparing next partition"
+        else:
+            state["last_line"] = "Partition tool completed"
         state["partition_eta_sec"] = None
         state["partition_eta_text"] = "--"
         return

@@ -293,6 +293,7 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
     try:
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
@@ -331,6 +332,13 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
                     if len(evidence_lines) > 500:
                         evidence_lines = evidence_lines[-500:]
                     _update_capture_state_from_line(piece, state)
+                    if "program terminated" in piece.lower() and proc.stdin:
+                        try:
+                            proc.stdin.write(b"\n")
+                            proc.stdin.flush()
+                            evidence_lines.append("sent newline after partclone completion")
+                        except (BrokenPipeError, OSError):
+                            pass
             elif proc.poll() is not None:
                 break
 

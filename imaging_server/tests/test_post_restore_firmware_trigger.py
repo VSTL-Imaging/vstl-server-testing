@@ -21,10 +21,88 @@ def test_post_restore_firmware_script_uses_windows_update_driver_firmware_scan()
     assert "shutdown.exe /r" in script
 
 
-def test_restore_uses_clonezilla_proportional_partition_table():
+def test_restore_uses_precreated_partition_table_mode_when_available():
     source = RESTORE_PATH.read_text(encoding="utf-8")
     command = source[source.index('cmd = ['):source.index('env = dict(os.environ)')]
-    assert '"-k1", "-r"' in command
+    assert 'partition_mode, "-r"' in command
+    assert '"-k1", "-r"' not in command
+    assert 'partition_mode = "-k" if precreated_layout else "-k1"' in source
+
+
+def test_restore_precreates_target_sized_windows_gpt(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "disk").write_text("nvme0n1\n", encoding="utf-8")
+    (image_dir / "nvme0n1-pt.sf").write_text(
+        """label: gpt
+label-id: 8CAA37FC-8DB0-4663-A321-5168BE693176
+device: /dev/nvme0n1
+unit: sectors
+first-lba: 34
+last-lba: 1000215182
+sector-size: 512
+
+/dev/nvme0n1p1 : start=2048, size=409600, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=C26C5B64-8ED5-4580-9BCC-177FC7A946D7, name="Basic data partition", attrs="GUID:63"
+/dev/nvme0n1p2 : start=411648, size=32768, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE, uuid=D0B30B59-6A8C-4927-85B0-0431195B34FA, name="Microsoft reserved partition", attrs="GUID:63"
+/dev/nvme0n1p3 : start=444416, size=998096896, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=FCBF2A4D-7327-4291-999F-83D1F10592A0, name="Basic data partition"
+/dev/nvme0n1p4 : start=998541312, size=1671168, type=DE94BBA4-06D1-4D40-A16A-BFD50179D6AC, uuid=7DE1045B-AD6B-4858-B4C6-A8A84C586211, attrs="RequiredPartition GUID:63"
+""",
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_run(argv, timeout=30):
+        calls.append(argv)
+        if argv[:2] == ["blockdev", "--getsz"]:
+            return 0, "500118192\n", ""
+        if argv[:2] == ["blockdev", "--getss"]:
+            return 0, "512\n", ""
+        return 0, "", ""
+
+    monkeypatch.setattr(ir, "_run", fake_run)
+
+    ok, precreated, evidence = ir._prepare_target_windows_gpt_from_image(
+        str(image_dir), "/dev/nvme0n1"
+    )
+
+    assert ok is True
+    assert precreated is True
+    assert "precreated target GPT" in evidence
+    sgdisk_create = next(call for call in calls if call[:2] == ["sgdisk", "--clear"])
+    assert "--new=1:2048:411647" in sgdisk_create
+    assert "--new=2:411648:444415" in sgdisk_create
+    assert "--new=3:444416:498446335" in sgdisk_create
+    assert "--new=4:498446336:500117503" in sgdisk_create
+    assert "--typecode=4:DE94BBA4-06D1-4D40-A16A-BFD50179D6AC" in sgdisk_create
+    assert "--attributes=4:set:0" in sgdisk_create
+    assert "--attributes=4:set:63" in sgdisk_create
+    assert calls[0] == ["blockdev", "--getsz", "/dev/nvme0n1"]
+
+
+def test_restore_precreate_skips_non_windows_layout(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "disk").write_text("sda\n", encoding="utf-8")
+    (image_dir / "sda-pt.sf").write_text(
+        """label: dos
+unit: sectors
+/dev/sda1 : start=2048, size=409600, type=83
+""",
+        encoding="utf-8",
+    )
+
+    def fail_run(argv, timeout=30):
+        raise AssertionError(f"unexpected command: {argv}")
+
+    monkeypatch.setattr(ir, "_run", fail_run)
+
+    ok, precreated, evidence = ir._prepare_target_windows_gpt_from_image(
+        str(image_dir), "/dev/sda"
+    )
+
+    assert ok is True
+    assert precreated is False
+    assert "not GPT" in evidence
 
 
 def test_restore_verification_fails_on_large_trailing_unallocated_space(monkeypatch):

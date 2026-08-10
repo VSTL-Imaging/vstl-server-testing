@@ -61,7 +61,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v5"
+RESTORE_CLIENT_BUILD = "restore-track-v6"
 
 
 def _now_iso() -> str:
@@ -278,9 +278,15 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
     """Run Clonezilla ``ocs-sr restoredisk`` and stream partclone progress."""
     dev_name = os.path.basename(device)
     image_dir = image_dir or os.path.join(_NFS_MOUNT_POINT, image_subdir)
+    prep_ok, precreated_layout, prep_ev = _prepare_target_windows_gpt_from_image(
+        image_dir, device, progress_callback
+    )
+    if not prep_ok:
+        return False, prep_ev
+    partition_mode = "-k" if precreated_layout else "-k1"
     cmd = [
         "ocs-sr", "-batch", "--nogui", "-or", _NFS_MOUNT_POINT,
-        "-g", "auto", "-e1", "auto", "-e2", "-k1", "-r",
+        "-g", "auto", "-e1", "auto", "-e2", partition_mode, "-r",
         "-icds", "-j2", "-p", "true",
         "restoredisk", image_subdir, dev_name,
     ]
@@ -304,6 +310,7 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
     }
     speed_state: dict = {}
     evidence_lines: list[str] = [
+        prep_ev,
         f"$ {' '.join(cmd)}",
         f"OCSROOT={env.get('OCSROOT')}",
     ]
@@ -431,6 +438,10 @@ def _emit_restore_stage(progress_callback: Optional[Callable[[dict], None]],
 _MAX_ALLOWED_TRAILING_FREE_BYTES = 1024 * 1024 * 1024
 _RESTORE_LAYOUT_ALIGN_SECTORS = 2048
 _MAX_RECOVERY_MOVE_BYTES = 4 * 1024 * 1024 * 1024
+_GPT_EFI_TYPE = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+_GPT_MSR_TYPE = "E3C9E316-0B5C-4DB8-817D-F92DF00215AE"
+_GPT_WINDOWS_TYPE = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
+_GPT_RECOVERY_TYPE = "DE94BBA4-06D1-4D40-A16A-BFD50179D6AC"
 
 
 def _logical_sector_size(device: str) -> int:
@@ -513,6 +524,18 @@ def _align_down(value: int, alignment: int = _RESTORE_LAYOUT_ALIGN_SECTORS) -> i
     return max(alignment, (value // alignment) * alignment)
 
 
+def _sgdisk_attribute_args(number: int, attrs: str) -> list[str]:
+    bits: set[int] = set()
+    if re.search(r"\bRequiredPartition\b", attrs or "", re.IGNORECASE):
+        bits.add(0)
+    for match in re.finditer(r"\bGUID:(\d+)\b", attrs or "", re.IGNORECASE):
+        try:
+            bits.add(int(match.group(1)))
+        except ValueError:
+            continue
+    return [f"--attributes={number}:set:{bit}" for bit in sorted(bits)]
+
+
 def _sgdisk_metadata_args(number: int, part: dict) -> list[str]:
     args: list[str] = []
     if part.get("type"):
@@ -521,7 +544,229 @@ def _sgdisk_metadata_args(number: int, part: dict) -> list[str]:
         args.append(f"--change-name={number}:{part.get('name') or ''}")
     if part.get("uuid"):
         args.append(f"--partition-guid={number}:{part['uuid']}")
+    args.extend(_sgdisk_attribute_args(number, part.get("attrs") or ""))
     return args
+
+
+def _find_image_sfdisk_table(image_dir: str) -> str:
+    if not image_dir or not os.path.isdir(image_dir):
+        return ""
+    disk_file = os.path.join(image_dir, "disk")
+    if os.path.isfile(disk_file):
+        try:
+            with open(disk_file, "r", encoding="utf-8", errors="ignore") as f:
+                disk_name = (f.read().split() or [""])[0]
+            if disk_name:
+                candidate = os.path.join(image_dir, f"{os.path.basename(disk_name)}-pt.sf")
+                if os.path.isfile(candidate):
+                    return candidate
+        except OSError:
+            pass
+    try:
+        candidates = sorted(
+            os.path.join(image_dir, name)
+            for name in os.listdir(image_dir)
+            if name.endswith("-pt.sf")
+        )
+    except OSError:
+        return ""
+    return candidates[0] if candidates else ""
+
+
+def _parse_image_sfdisk_table(path: str) -> tuple[dict, list[dict], str]:
+    table: dict = {}
+    parts: list[dict] = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+    except OSError as exc:
+        return {}, [], f"cannot read image partition table {path}: {exc}"
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "start=" in line and "size=" in line and ":" in line:
+            node, fields = line.split(":", 1)
+            node = node.strip()
+            number = _part_number(node)
+            if number is None:
+                continue
+            part: dict = {"node": node.strip(), "number": number}
+            for match in re.finditer(r"([A-Za-z0-9_-]+)=(?:\"([^\"]*)\"|([^,]+))", fields):
+                key = match.group(1).strip()
+                value = (match.group(2) if match.group(2) is not None else match.group(3)).strip()
+                if key in {"start", "size"}:
+                    try:
+                        part[key] = int(value)
+                    except ValueError:
+                        part[key] = 0
+                else:
+                    part[key] = value
+            if int(part.get("start") or 0) > 0 and int(part.get("size") or 0) > 0:
+                parts.append(part)
+            continue
+        if ":" in line:
+            key, value = line.split(":", 1)
+            table[key.strip().lower()] = value.strip()
+
+    if not parts:
+        return table, [], f"no partitions found in image table {path}"
+    return table, sorted(parts, key=lambda item: int(item.get("number") or 0)), "image sfdisk table ok"
+
+
+def _gpt_type(part: dict) -> str:
+    return (part.get("type") or "").strip().upper()
+
+
+def _pick_windows_gpt_parts(parts: list[dict]) -> tuple[dict, list[dict], dict, str]:
+    efi_parts = [part for part in parts if _gpt_type(part) == _GPT_EFI_TYPE]
+    msr_parts = [part for part in parts if _gpt_type(part) == _GPT_MSR_TYPE]
+    recovery_parts = [part for part in parts if _gpt_type(part) == _GPT_RECOVERY_TYPE]
+    windows_parts = [part for part in parts if _gpt_type(part) == _GPT_WINDOWS_TYPE]
+    if len(efi_parts) != 1:
+        return {}, [], {}, "precreate skipped: expected exactly one EFI partition"
+    if len(msr_parts) > 1:
+        return {}, [], {}, "precreate skipped: expected no more than one MSR partition"
+    if len(recovery_parts) != 1:
+        return {}, [], {}, "precreate skipped: expected exactly one recovery partition"
+    if len(windows_parts) != 1:
+        return {}, [], {}, "precreate skipped: expected exactly one Windows data partition"
+    recognized = set(id(part) for part in efi_parts + msr_parts + recovery_parts + windows_parts)
+    extras = [part for part in parts if id(part) not in recognized]
+    if extras:
+        return {}, [], {}, "precreate skipped: image has unsupported extra partitions"
+    os_part = windows_parts[0]
+    rec_part = recovery_parts[0]
+    if int(rec_part.get("start") or 0) <= int(os_part.get("start") or 0):
+        return {}, [], {}, "precreate skipped: recovery partition is not after Windows"
+    return os_part, efi_parts + msr_parts, rec_part, "windows gpt layout ok"
+
+
+def _target_disk_sectors(device: str) -> tuple[int | None, str]:
+    rc, out, err = _run(["blockdev", "--getsz", device], timeout=10)
+    if rc != 0:
+        return None, f"blockdev --getsz failed rc={rc} {err[:200]}"
+    try:
+        sectors = int(out.strip())
+    except ValueError:
+        return None, f"blockdev --getsz parse failed: {out[:120]}"
+    if sectors <= 0:
+        return None, f"blockdev --getsz returned unusable size: {sectors}"
+    return sectors, f"target_sectors={sectors}"
+
+
+def _prepare_target_windows_gpt_from_image(
+    image_dir: str,
+    device: str,
+    progress_callback: Optional[Callable[[dict], None]] = None,
+) -> tuple[bool, bool, str]:
+    """Pre-create a target-sized Windows GPT before Clonezilla restore.
+
+    Clonezilla's proportional GPT mode can fail when a 512 GB Windows image is
+    restored to a smaller, but still large enough, disk. Creating the target
+    layout ourselves keeps EFI/MSR fixed, places recovery at the end, and lets
+    the Windows partition fill the available space before ``ocs-sr`` writes
+    partition data.
+    """
+    evidence: list[str] = []
+    pt_path = _find_image_sfdisk_table(image_dir)
+    if not pt_path:
+        return True, False, "precreate skipped: no Clonezilla -pt.sf table found"
+
+    table, parts, parse_ev = _parse_image_sfdisk_table(pt_path)
+    evidence.append(parse_ev)
+    if not parts:
+        return True, False, "\n".join(evidence)
+    if (table.get("label") or "").lower() != "gpt":
+        evidence.append("precreate skipped: image partition table is not GPT")
+        return True, False, "\n".join(evidence)
+    if (table.get("unit") or "sectors").lower() != "sectors":
+        evidence.append("precreate skipped: image partition table unit is not sectors")
+        return True, False, "\n".join(evidence)
+
+    os_part, _fixed_parts, rec_part, layout_ev = _pick_windows_gpt_parts(parts)
+    evidence.append(layout_ev)
+    if not os_part:
+        return True, False, "\n".join(evidence)
+
+    target_sectors, size_ev = _target_disk_sectors(device)
+    evidence.append(size_ev)
+    if target_sectors is None:
+        return False, False, "\n".join(evidence)
+    source_sector_size = int(table.get("sector-size") or 512)
+    target_sector_size = _logical_sector_size(device)
+    evidence.append(f"sector_size image={source_sector_size} target={target_sector_size}")
+    if source_sector_size != target_sector_size:
+        evidence.append("precreate failed: source and target sector sizes differ")
+        return False, False, "\n".join(evidence)
+
+    target_last_lba = target_sectors - 34
+    rec_size = int(rec_part.get("size") or 0)
+    rec_start = _align_down(target_last_lba - rec_size + 1)
+    rec_end = rec_start + rec_size - 1
+    os_start = int(os_part.get("start") or 0)
+    os_end = rec_start - 1
+    if rec_size <= 0 or rec_end > target_last_lba or os_end <= os_start:
+        evidence.append(
+            "precreate failed: target disk is too small for EFI/MSR/Windows/recovery layout"
+        )
+        return False, False, "\n".join(evidence)
+
+    target_parts: list[dict] = []
+    os_number = int(os_part.get("number") or 0)
+    rec_number = int(rec_part.get("number") or 0)
+    for source in parts:
+        number = int(source.get("number") or 0)
+        target = dict(source)
+        if number == os_number:
+            target["start"] = os_start
+            target["size"] = os_end - os_start + 1
+        elif number == rec_number:
+            target["start"] = rec_start
+            target["size"] = rec_size
+        else:
+            end = int(target.get("start") or 0) + int(target.get("size") or 0) - 1
+            if end >= os_start and number != os_number:
+                evidence.append("precreate failed: fixed partition overlaps Windows start")
+                return False, False, "\n".join(evidence)
+        target_parts.append(target)
+
+    _emit_restore_stage(progress_callback, "Pre-restore: creating target Windows GPT")
+    cmd = ["sgdisk", "--zap-all", device]
+    rc, out, err = _run(cmd, timeout=60)
+    evidence.append(f"$ {' '.join(cmd)} rc={rc} {out[:200]} {err[:300]}")
+    if rc != 0:
+        return False, False, "\n".join(evidence)
+
+    cmd = ["sgdisk", "--clear"]
+    if table.get("label-id"):
+        cmd.append(f"--disk-guid={table['label-id']}")
+    for part in sorted(target_parts, key=lambda item: int(item.get("number") or 0)):
+        number = int(part.get("number") or 0)
+        start = int(part.get("start") or 0)
+        end = _part_end(part)
+        if number <= 0 or start <= 0 or end <= start or end > target_last_lba:
+            evidence.append(f"precreate failed: invalid calculated partition {number}")
+            return False, False, "\n".join(evidence)
+        cmd.append(f"--new={number}:{start}:{end}")
+        cmd.extend(_sgdisk_metadata_args(number, part))
+    cmd.append(device)
+    rc, out, err = _run(cmd, timeout=60)
+    evidence.append(f"$ {' '.join(cmd)} rc={rc} {out[:500]} {err[:500]}")
+    if rc != 0:
+        return False, False, "\n".join(evidence)
+
+    _run(["sgdisk", "-e", device], timeout=30)
+    _run(["partprobe", device], timeout=10)
+    _run(["udevadm", "settle"], timeout=10)
+    evidence.append(
+        "precreated target GPT: "
+        f"p{os_number} start={os_start} size={os_end - os_start + 1}; "
+        f"p{rec_number} start={rec_start} size={rec_size}; "
+        f"target_last_lba={target_last_lba}"
+    )
+    return True, True, "\n".join(evidence)
 
 
 def _pick_restore_temp_path(size_bytes: int, partition_number: int) -> tuple[str, str]:

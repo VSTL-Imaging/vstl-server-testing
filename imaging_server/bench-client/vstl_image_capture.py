@@ -1253,11 +1253,11 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
     lower = clean.lower()
 
     if "program terminated" in lower:
-        state["terminated"] = True
-        state["phase"] = "Program terminated"
+        # partclone prints this when its per-partition worker exits normally;
+        # Clonezilla's final process return code decides restore/capture success.
+        state["last_line"] = "Partition tool completed"
         state["partition_eta_sec"] = None
         state["partition_eta_text"] = "--"
-        state["write_speed"] = "0 B/s"
         return
 
     op = state.get("operation") or "capturing"

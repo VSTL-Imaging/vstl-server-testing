@@ -33,7 +33,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import select
+import shlex
+import shutil
 import subprocess
 import time
 import urllib.error
@@ -371,6 +374,8 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
 
 
 _MAX_ALLOWED_TRAILING_FREE_BYTES = 1024 * 1024 * 1024
+_RESTORE_LAYOUT_ALIGN_SECTORS = 2048
+_MAX_RECOVERY_MOVE_BYTES = 4 * 1024 * 1024 * 1024
 
 
 def _logical_sector_size(device: str) -> int:
@@ -407,6 +412,238 @@ def _trailing_free_bytes(device: str) -> tuple[int | None, str]:
     return free_bytes, f"trailing_free_bytes={free_bytes}"
 
 
+def _part_number(path: str) -> int | None:
+    base = os.path.basename(path or "")
+    m = re.search(r"(?:p)?([0-9]+)$", base)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def _part_path(device: str, number: int) -> str:
+    base = os.path.basename(device)
+    suffix = f"p{number}" if re.search(r"[0-9]$", base) else str(number)
+    return f"{device}{suffix}"
+
+
+def _read_sfdisk_table(device: str) -> tuple[dict | None, list[dict], str]:
+    rc, out, err = _run(["sfdisk", "-J", device], timeout=20)
+    if rc != 0:
+        return None, [], f"sfdisk unavailable: rc={rc} {err[:200]}"
+    try:
+        table = (json.loads(out).get("partitiontable") or {})
+    except (json.JSONDecodeError, TypeError) as exc:
+        return None, [], f"sfdisk parse failed: {exc}"
+    return table, table.get("partitions") or [], "sfdisk ok"
+
+
+def _entry_for_path(parts: list[dict], path: str) -> dict:
+    number = _part_number(path)
+    for part in parts:
+        if part.get("node") == path:
+            return part
+        if number is not None and _part_number(part.get("node", "")) == number:
+            return part
+    return {}
+
+
+def _part_end(part: dict) -> int:
+    return int(part.get("start") or 0) + int(part.get("size") or 0) - 1
+
+
+def _align_down(value: int, alignment: int = _RESTORE_LAYOUT_ALIGN_SECTORS) -> int:
+    return max(alignment, (value // alignment) * alignment)
+
+
+def _sgdisk_metadata_args(number: int, part: dict) -> list[str]:
+    args: list[str] = []
+    if part.get("type"):
+        args.append(f"--typecode={number}:{part['type']}")
+    if part.get("name") is not None:
+        args.append(f"--change-name={number}:{part.get('name') or ''}")
+    if part.get("uuid"):
+        args.append(f"--partition-guid={number}:{part['uuid']}")
+    return args
+
+
+def _pick_restore_temp_path(size_bytes: int, partition_number: int) -> tuple[str, str]:
+    candidates = [
+        "/run/vstl-restore-work",
+        "/tmp/vstl-restore-work",
+        "/var/tmp/vstl-restore-work",
+        os.path.join(_NFS_MOUNT_POINT, ".vstl-restore-work"),
+    ]
+    need = size_bytes + 128 * 1024 * 1024
+    for directory in candidates:
+        try:
+            os.makedirs(directory, exist_ok=True)
+            if shutil.disk_usage(directory).free >= need:
+                return (
+                    os.path.join(directory, f"recovery-p{partition_number}.img"),
+                    f"temp={directory}",
+                )
+        except OSError:
+            continue
+    return "", f"no temp space for {size_bytes} byte recovery partition"
+
+
+def _grow_ntfs(partition: str) -> tuple[bool, str]:
+    quoted = shlex.quote(partition)
+    rc, out, err = _run(
+        ["bash", "-lc", f"yes | ntfsresize -f -x {quoted}"],
+        timeout=2 * 3600,
+    )
+    return rc == 0, f"$ ntfsresize {partition} rc={rc} {out[-500:]} {err[-500:]}"
+
+
+def _expand_restored_windows_layout(device: str) -> tuple[bool, str]:
+    """Expand restored Windows images so larger target disks do not keep
+    trailing unallocated space. Common Clonezilla images restore as:
+    EFI, MSR, Windows, Recovery. The recovery partition blocks growing C:,
+    so for small WinRE partitions we preserve it, recreate it at the end
+    of the target disk, then grow the Windows NTFS partition.
+    """
+    evidence: list[str] = []
+    trailing_free, free_ev = _trailing_free_bytes(device)
+    evidence.append(free_ev)
+    if trailing_free is None:
+        return False, "\n".join(evidence)
+    if trailing_free <= _MAX_ALLOWED_TRAILING_FREE_BYTES:
+        evidence.append("restore layout already uses target disk")
+        return True, "\n".join(evidence)
+
+    layout = validate_partition_layout(device)
+    if not layout.get("ok", False):
+        evidence.append("layout issue before expansion: " + "; ".join(layout.get("issues") or []))
+        return False, "\n".join(evidence)
+
+    os_path = layout.get("os_partition") or ""
+    os_num = _part_number(os_path)
+    if not os_path or os_num is None:
+        evidence.append("no expandable Windows partition found")
+        return False, "\n".join(evidence)
+
+    table, parts, table_ev = _read_sfdisk_table(device)
+    evidence.append(table_ev)
+    if not table or (table.get("label") or "").lower() != "gpt":
+        evidence.append("automatic restore expansion currently supports GPT disks only")
+        return False, "\n".join(evidence)
+
+    os_entry = _entry_for_path(parts, os_path)
+    if not os_entry:
+        evidence.append(f"Windows partition not found in sfdisk table: {os_path}")
+        return False, "\n".join(evidence)
+
+    last_lba = int(table.get("lastlba") or 0)
+    sector_size = _logical_sector_size(device)
+    os_start = int(os_entry.get("start") or 0)
+    os_end = _part_end(os_entry)
+    recovery_entries: list[tuple[dict, dict]] = []
+    for row in layout.get("partitions") or []:
+        if row.get("role") != "recovery":
+            continue
+        entry = _entry_for_path(parts, row.get("path") or "")
+        if entry and int(entry.get("start") or 0) > os_end:
+            recovery_entries.append((row, entry))
+    recovery_entries.sort(key=lambda item: int(item[1].get("start") or 0))
+
+    _run(["sgdisk", "-e", device], timeout=30)
+    if not recovery_entries:
+        new_os_end = last_lba - _RESTORE_LAYOUT_ALIGN_SECTORS
+        if new_os_end <= os_end:
+            evidence.append("no usable free space after Windows partition")
+            return False, "\n".join(evidence)
+        cmd = [
+            "sgdisk",
+            f"--delete={os_num}",
+            f"--new={os_num}:{os_start}:{new_os_end}",
+            *_sgdisk_metadata_args(os_num, os_entry),
+            device,
+        ]
+        rc, out, err = _run(cmd, timeout=60)
+        evidence.append(f"$ {' '.join(cmd)} rc={rc} {out[:300]} {err[:300]}")
+        if rc != 0:
+            return False, "\n".join(evidence)
+        _run(["partprobe", device], timeout=10)
+        _run(["udevadm", "settle"], timeout=10)
+        ntfs_ok, ntfs_ev = _grow_ntfs(os_path)
+        evidence.append(ntfs_ev)
+        if not ntfs_ok:
+            return False, "\n".join(evidence)
+        return True, "\n".join(evidence)
+
+    _rec_row, rec_entry = recovery_entries[0]
+    rec_num = _part_number(rec_entry.get("node") or "")
+    if rec_num is None:
+        evidence.append("recovery partition number could not be determined")
+        return False, "\n".join(evidence)
+    rec_size = int(rec_entry.get("size") or 0)
+    rec_size_bytes = rec_size * sector_size
+    if rec_size_bytes > _MAX_RECOVERY_MOVE_BYTES:
+        evidence.append(f"recovery partition too large to auto-move: {rec_size_bytes} bytes")
+        return False, "\n".join(evidence)
+
+    new_rec_start = _align_down(last_lba - rec_size + 1)
+    new_rec_end = new_rec_start + rec_size - 1
+    new_os_end = new_rec_start - _RESTORE_LAYOUT_ALIGN_SECTORS
+    if new_rec_end > last_lba or new_os_end <= os_end:
+        evidence.append("calculated expanded layout is not usable")
+        return False, "\n".join(evidence)
+
+    rec_path = rec_entry.get("node") or _part_path(device, rec_num)
+    temp_path, temp_ev = _pick_restore_temp_path(rec_size_bytes, rec_num)
+    evidence.append(temp_ev)
+    if not temp_path:
+        return False, "\n".join(evidence)
+    rc, out, err = _run(
+        ["dd", f"if={rec_path}", f"of={temp_path}", "bs=16M", "status=none"],
+        timeout=30 * 60,
+    )
+    evidence.append(f"$ backup recovery {rec_path} rc={rc} {out[:120]} {err[:220]}")
+    if rc != 0:
+        return False, "\n".join(evidence)
+
+    cmd = [
+        "sgdisk",
+        f"--delete={rec_num}",
+        f"--delete={os_num}",
+        f"--new={os_num}:{os_start}:{new_os_end}",
+        *_sgdisk_metadata_args(os_num, os_entry),
+        f"--new={rec_num}:{new_rec_start}:{new_rec_end}",
+        *_sgdisk_metadata_args(rec_num, rec_entry),
+        device,
+    ]
+    rc, out, err = _run(cmd, timeout=60)
+    evidence.append(f"$ {' '.join(cmd)} rc={rc} {out[:300]} {err[:300]}")
+    if rc != 0:
+        return False, "\n".join(evidence)
+    _run(["partprobe", device], timeout=10)
+    _run(["udevadm", "settle"], timeout=10)
+    rec_new_path = _part_path(device, rec_num)
+    rc, out, err = _run(
+        ["dd", f"if={temp_path}", f"of={rec_new_path}", "bs=16M", "conv=fsync", "status=none"],
+        timeout=30 * 60,
+    )
+    evidence.append(f"$ restore recovery {rec_new_path} rc={rc} {out[:120]} {err[:220]}")
+    try:
+        os.remove(temp_path)
+    except OSError:
+        pass
+    if rc != 0:
+        return False, "\n".join(evidence)
+    ntfs_ok, ntfs_ev = _grow_ntfs(os_path)
+    evidence.append(ntfs_ev)
+    if not ntfs_ok:
+        return False, "\n".join(evidence)
+    _run(["sgdisk", "-e", device], timeout=30)
+    _run(["partprobe", device], timeout=10)
+    _run(["udevadm", "settle"], timeout=10)
+    return True, "\n".join(evidence)
+
+
 def _verify_restore(device: str) -> tuple[bool, str]:
     """Run ``partprobe`` + ``lsblk`` after the restore and confirm a fresh
     partition table is visible. This isn't cryptographic verification â€”
@@ -428,6 +665,17 @@ def _verify_restore(device: str) -> tuple[bool, str]:
     if not has_part:
         evidence.append("no restored partitions detected")
         return False, "\n".join(evidence)
+
+    expanded, expand_ev = _expand_restored_windows_layout(device)
+    evidence.append("$ post-restore layout expansion")
+    evidence.append(expand_ev)
+    if expanded:
+        _run(["partprobe", device], timeout=10)
+        _run(["udevadm", "settle"], timeout=10)
+        rc, out, err = _run(
+            ["lsblk", "-no", "NAME,SIZE,TYPE,FSTYPE,LABEL", device], timeout=10,
+        )
+        evidence.append(out[:2000] if rc == 0 else f"post-expand lsblk rc={rc} err={err[:200]}")
 
     layout = validate_partition_layout(device)
     if not layout.get("ok", False):

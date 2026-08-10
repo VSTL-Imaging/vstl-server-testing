@@ -61,6 +61,65 @@ def test_restore_verification_fails_on_large_trailing_unallocated_space(monkeypa
     assert ["sgdisk", "-e", "/dev/sda"] in calls
 
 
+def test_restore_expansion_moves_recovery_and_grows_windows(monkeypatch, tmp_path):
+    calls = []
+
+    table = {
+        "partitiontable": {
+            "label": "gpt",
+            "lastlba": 1000215182,
+            "partitions": [
+                {"node": "/dev/sda1", "start": 2048, "size": 409600, "type": "EFI", "uuid": "1111", "name": "EFI"},
+                {"node": "/dev/sda2", "start": 411648, "size": 32768, "type": "MSR", "uuid": "2222", "name": "MSR"},
+                {"node": "/dev/sda3", "start": 444416, "size": 497025024, "type": "WIN", "uuid": "3333", "name": "Windows"},
+                {"node": "/dev/sda4", "start": 497469440, "size": 1597440, "type": "REC", "uuid": "4444", "name": "Recovery"},
+            ],
+        },
+    }
+
+    def fake_run(argv, timeout=30):
+        calls.append(argv)
+        if argv[:2] == ["sfdisk", "-J"]:
+            return 0, json.dumps(table), ""
+        if argv[:2] == ["blockdev", "--getss"]:
+            return 0, "512\n", ""
+        return 0, "", ""
+
+    monkeypatch.setattr(ir, "_run", fake_run)
+    monkeypatch.setattr(
+        ir,
+        "validate_partition_layout",
+        lambda device: {
+            "ok": True,
+            "issues": [],
+            "os_partition": "/dev/sda3",
+            "partitions": [
+                {"path": "/dev/sda1", "role": "efi"},
+                {"path": "/dev/sda2", "role": "msr"},
+                {"path": "/dev/sda3", "role": "windows"},
+                {"path": "/dev/sda4", "role": "recovery"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        ir,
+        "_pick_restore_temp_path",
+        lambda size_bytes, number: (str(tmp_path / "recovery.img"), "temp ok"),
+    )
+
+    expanded, evidence = ir._expand_restored_windows_layout("/dev/sda")
+
+    assert expanded is True
+    assert "temp ok" in evidence
+    assert any(call[:1] == ["dd"] and "if=/dev/sda4" in call for call in calls)
+    assert any(call[:1] == ["dd"] and "of=/dev/sda4" in call for call in calls)
+    sgdisk_calls = [call for call in calls if call and call[0] == "sgdisk"]
+    assert any("--delete=4" in call and "--delete=3" in call for call in sgdisk_calls)
+    assert any(any(arg.startswith("--new=3:444416:") for arg in call) for call in sgdisk_calls)
+    assert any(any(arg.startswith("--new=4:") for arg in call) for call in sgdisk_calls)
+    assert any(call[:2] == ["bash", "-lc"] and "ntfsresize -f -x /dev/sda3" in call[2] for call in calls)
+
+
 def test_successful_restore_fails_when_partition_layout_is_not_verified(monkeypatch, tmp_path):
     image_dir = tmp_path / "image"
     image_dir.mkdir()

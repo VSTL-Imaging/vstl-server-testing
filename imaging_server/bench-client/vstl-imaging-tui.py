@@ -9230,6 +9230,11 @@ def screen_testing_restore_completion(stdscr, ident: dict,
             (f"Image   : {str(restore_result.get('image_name'))[: max(20, w - 18)]}",
              curses.color_pair(CYAN_PAIR)),
         )
+    if restore_result and not restore_ok and restore_result.get("error_message"):
+        detail_lines.append(
+            (f"Error   : {str(restore_result.get('error_message'))[: max(20, w - 18)]}",
+             curses.color_pair(RED_PAIR)),
+        )
     return screen_testing_process_completion(
         stdscr,
         "Testing Mode - Restore Only OS",

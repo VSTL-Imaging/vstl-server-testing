@@ -345,6 +345,8 @@ def test_reporting_ingest_backfills_certificate_for_successful_erase_audits():
     assert "vstl_clear_only_exception_reason" in INGEST_PHP
     assert "temporary HP EliteBook 850 G5 clear-only policy" in INGEST_PHP
     assert "temporary HP EliteBook 850 G6 clear-only policy" in INGEST_PHP
+    assert "temporary Dell Latitude 5330 clear-only policy" in INGEST_PHP
+    assert "temporary Dell Latitude 5440 clear-only policy" in INGEST_PHP
     assert "temporary Dell Latitude 5520 clear-only policy" in INGEST_PHP
     assert "temporary Lenovo ThinkPad X1 Carbon 8th Gen clear-only policy" in INGEST_PHP
     assert "clear_only_exception" in INGEST_PHP

@@ -7315,6 +7315,8 @@ def _clear_only_exception_reason(ident: dict | None) -> str:
         (("hp", "hewlettpackard"), "elitebook", ("640", "g10"), "temporary HP EliteBook 640 G10 clear-only policy"),
         (("hp", "hewlettpackard"), "elitebook", ("850", "g5"), "temporary HP EliteBook 850 G5 clear-only policy"),
         (("hp", "hewlettpackard"), "elitebook", ("850", "g6"), "temporary HP EliteBook 850 G6 clear-only policy"),
+        (("dell",), "latitude", ("5330",), "temporary Dell Latitude 5330 clear-only policy"),
+        (("dell",), "latitude", ("5440",), "temporary Dell Latitude 5440 clear-only policy"),
         (("dell",), "latitude", ("5520",), "temporary Dell Latitude 5520 clear-only policy"),
         (("lenovo",), "x1 carbon", ("gen", "8"), "temporary Lenovo ThinkPad X1 Carbon 8th Gen clear-only policy"),
         (("lenovo",), "x1 carbon", ("8th",), "temporary Lenovo ThinkPad X1 Carbon 8th Gen clear-only policy"),

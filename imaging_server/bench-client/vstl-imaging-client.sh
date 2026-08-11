@@ -469,6 +469,16 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
         MODEL_CLEAR_ONLY_LABEL="HP EliteBook 850 G6"
     elif echo "$DMI_PROFILE" | grep -Eiq 'dell' \
         && echo "$DMI_PROFILE" | grep -Eiq 'latitude' \
+        && echo "$DMI_PROFILE" | grep -Eiq '\b5330\b'; then
+        MODEL_CLEAR_ONLY_EXCEPTION=1
+        MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5330"
+    elif echo "$DMI_PROFILE" | grep -Eiq 'dell' \
+        && echo "$DMI_PROFILE" | grep -Eiq 'latitude' \
+        && echo "$DMI_PROFILE" | grep -Eiq '\b5440\b'; then
+        MODEL_CLEAR_ONLY_EXCEPTION=1
+        MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5440"
+    elif echo "$DMI_PROFILE" | grep -Eiq 'dell' \
+        && echo "$DMI_PROFILE" | grep -Eiq 'latitude' \
         && echo "$DMI_PROFILE" | grep -Eiq '\b5520\b'; then
         MODEL_CLEAR_ONLY_EXCEPTION=1
         MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5520"

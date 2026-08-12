@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -16,6 +18,74 @@ restore_spec = importlib.util.spec_from_file_location("vstl_image_restore_progre
 restore = importlib.util.module_from_spec(restore_spec)
 assert restore_spec.loader is not None
 restore_spec.loader.exec_module(restore)
+
+
+def _write_restore_metadata(path: Path, **overrides):
+    path.mkdir()
+    meta = {
+        "image_name": f"{path.name}.img",
+        "image_subdir": path.name,
+        "model": "Latitude 5440",
+        "part_number": "0C00",
+        "cpu": "13th Gen Intel Core i5-1335U",
+        "os_name": "Windows 11 Pro",
+        "os_version": "25H2",
+        "os_build": "26200",
+        "os_token": "Win_11_Pro_25H2",
+    }
+    meta.update(overrides)
+    (path / restore._CAPTURE_META_FILE).write_text(
+        json.dumps(meta), encoding="utf-8",
+    )
+    return meta
+
+
+def test_restore_picker_source_collapses_same_os_to_latest_capture(tmp_path, monkeypatch):
+    older = tmp_path / "older-backup"
+    newer = tmp_path / "newer-backup"
+    _write_restore_metadata(
+        older,
+        image_name="OLDER_LATITUDE_5440_Win_11_Pro_25H2.img",
+        captured_at="2026-07-11T11:27:08+00:00",
+    )
+    _write_restore_metadata(
+        newer,
+        image_name="NEWER_LATITUDE_5440_Win_11_Pro_25H2.img",
+        captured_at="2026-08-12T06:43:22+00:00",
+    )
+    monkeypatch.setattr(restore, "_NFS_MOUNT_POINT", str(tmp_path))
+    monkeypatch.setattr(restore, "mount_nfs", lambda *args: (True, "mounted"))
+
+    result = restore.find_local_golden_copies(
+        "server", "/images/dev", "rw", "Latitude 5440", "0C00",
+        "13th Gen Intel Core i5-1335U",
+    )
+
+    assert result["status"] == "found"
+    assert [copy["image_name"] for copy in result["copies"]] == [
+        "NEWER_LATITUDE_5440_Win_11_Pro_25H2.img",
+    ]
+    assert result["golden_copy"]["image_name"] == "NEWER_LATITUDE_5440_Win_11_Pro_25H2.img"
+    assert result["golden_copy"]["captured_at"] == "2026-08-12T06:43:22+00:00"
+
+
+def test_restore_latest_copy_falls_back_to_directory_mtime(tmp_path, monkeypatch):
+    older = tmp_path / "older-no-meta-time"
+    newer = tmp_path / "newer-no-meta-time"
+    _write_restore_metadata(older, image_name="OLDER_NO_TIME.img", captured_at="")
+    _write_restore_metadata(newer, image_name="NEWER_NO_TIME.img", captured_at="")
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_800_000_000, 1_800_000_000))
+    monkeypatch.setattr(restore, "_NFS_MOUNT_POINT", str(tmp_path))
+    monkeypatch.setattr(restore, "mount_nfs", lambda *args: (True, "mounted"))
+
+    result = restore.find_local_golden_copies(
+        "server", "/images/dev", "rw", "Latitude 5440", "0C00",
+        "13th Gen Intel Core i5-1335U",
+    )
+
+    assert [copy["image_name"] for copy in result["copies"]] == ["NEWER_NO_TIME.img"]
+    assert result["golden_copy"]["image_name"] == "NEWER_NO_TIME.img"
 
 
 def test_partclone_program_terminated_line_is_not_treated_as_interruption():

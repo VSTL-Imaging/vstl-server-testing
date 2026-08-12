@@ -61,7 +61,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v7"
+RESTORE_CLIENT_BUILD = "restore-track-v8"
 
 
 def _now_iso() -> str:
@@ -134,9 +134,77 @@ def _dir_size_gb(path: str) -> str:
     return f"{round(total / (1024 ** 3), 2)}"
 
 
+def _dir_mtime_iso(path: str) -> str:
+    try:
+        return datetime.fromtimestamp(
+            os.path.getmtime(path), timezone.utc
+        ).isoformat()
+    except OSError:
+        return ""
+
+
+def _timestamp_value(value: object) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _copy_recency_key(copy: dict) -> tuple[float, str]:
+    ts = max(
+        _timestamp_value(copy.get("captured_at")),
+        _timestamp_value(copy.get("updated_at")),
+        _timestamp_value(copy.get("created_at")),
+        _timestamp_value(copy.get("image_mtime")),
+    )
+    return (ts, _norm_match(copy.get("image_subdir") or copy.get("image_name") or ""))
+
+
+def _copy_restore_choice_key(copy: dict) -> tuple[str, str]:
+    os_key = _norm_match(
+        copy.get("os_token")
+        or " ".join(
+            str(copy.get(key) or "")
+            for key in ("os_name", "os_version", "os_build")
+        )
+    )
+    if not os_key:
+        os_key = _norm_match(copy.get("image_name", ""))
+    return (_norm_match(copy.get("match_type", "")), os_key)
+
+
+def latest_restore_copies(copies: list[dict]) -> list[dict]:
+    """Collapse duplicate restore choices to the newest captured backup."""
+    latest: dict[tuple[str, str], dict] = {}
+    for copy in copies:
+        key = _copy_restore_choice_key(copy)
+        current = latest.get(key)
+        if current is None or _copy_recency_key(copy) > _copy_recency_key(current):
+            latest[key] = copy
+    return sorted(
+        latest.values(),
+        key=lambda copy: (
+            _norm_match(copy.get("os_name", "")),
+            _norm_match(copy.get("os_version", "")),
+            _norm_match(copy.get("os_build", "")),
+            _copy_recency_key(copy),
+        ),
+    )
+
+
+def newest_restore_copy(copies: list[dict]) -> dict:
+    return max(copies, key=_copy_recency_key) if copies else {}
+
+
 def _copy_from_metadata(image_dir: str, meta: dict, match_type: str) -> dict:
     image_subdir = os.path.basename(image_dir.rstrip("/"))
     image_name = meta.get("image_name") or image_subdir
+    image_mtime = _dir_mtime_iso(image_dir)
     return {
         "id": meta.get("id", ""),
         "model": meta.get("model", ""),
@@ -152,6 +220,10 @@ def _copy_from_metadata(image_dir: str, meta: dict, match_type: str) -> dict:
         "os_version": meta.get("os_version", ""),
         "os_build": meta.get("os_build", ""),
         "os_token": meta.get("os_token", ""),
+        "captured_at": meta.get("captured_at") or meta.get("created_at", ""),
+        "created_at": meta.get("created_at", ""),
+        "updated_at": meta.get("updated_at", ""),
+        "image_mtime": image_mtime,
     }
 
 
@@ -203,26 +275,21 @@ def find_local_golden_copies(
     except OSError as e:
         return {"status": "error", "error": f"NFS scan failed: {e}", "evidence": mount_ev}
 
-    def _sort_key(copy: dict) -> tuple[str, str, str]:
-        return (
-            _norm_match(copy.get("os_name", "")),
-            _norm_match(copy.get("os_version", "")),
-            _norm_match(copy.get("image_name", "")),
-        )
-
     if sku_matches:
+        copies = latest_restore_copies(sku_matches)
         return {
             "status": "found",
-            "copies": sorted(sku_matches, key=_sort_key),
-            "golden_copy": sorted(sku_matches, key=_sort_key)[-1],
+            "copies": copies,
+            "golden_copy": newest_restore_copy(copies),
             "match_type": "sku",
             "evidence": mount_ev,
         }
     if model_cpu_matches:
+        copies = latest_restore_copies(model_cpu_matches)
         return {
             "status": "found",
-            "copies": sorted(model_cpu_matches, key=_sort_key),
-            "golden_copy": sorted(model_cpu_matches, key=_sort_key)[-1],
+            "copies": copies,
+            "golden_copy": newest_restore_copy(copies),
             "match_type": "model_cpu",
             "evidence": mount_ev,
         }
@@ -241,7 +308,7 @@ def find_local_golden_copy(
         nfs_host, nfs_share, mount_options, model, part_number, cpu_model,
     )
     if result.get("status") == "found" and result.get("copies"):
-        result["golden_copy"] = result["copies"][-1]
+        result["golden_copy"] = newest_restore_copy(result["copies"])
     return result
 
 

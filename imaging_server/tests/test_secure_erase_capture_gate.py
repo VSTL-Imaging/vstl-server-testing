@@ -425,7 +425,13 @@ def test_hp_elitebook_640_g10_can_complete_with_clear_without_final_purge_retry(
     software_zero.assert_called_once()
 
 
-def test_hp_probook_640_g5_skips_native_nvme_sanitize_before_clear_exception():
+def test_hp_probook_640_g5_attempts_purge_before_firmware_safe_clear_exception():
+    sanitize_calls = []
+
+    def sanitize_rejected(device, action, progress=None):
+        sanitize_calls.append(action)
+        return False, erase._NVME_SANITIZE_ACTION_LABELS[action], f"sanitize {action} rejected"
+
     with (
         mock.patch.object(
             erase,
@@ -434,9 +440,9 @@ def test_hp_probook_640_g5_skips_native_nvme_sanitize_before_clear_exception():
         ),
         mock.patch.object(erase, "_release_block_device", return_value="released"),
         mock.patch.object(erase, "_nvme_sanitize_actions", return_value=([2, 4], "sanicap=0x00000003")) as sanitize_actions,
-        mock.patch.object(erase, "_nvme_format_crypto") as format_crypto,
+        mock.patch.object(erase, "_nvme_format_crypto", return_value=(False, "NVMe_FORMAT_CRYPTO", "crypto rejected")) as format_crypto,
         mock.patch.object(erase, "_nvme_format_user_data") as user_data_format,
-        mock.patch.object(erase, "_nvme_sanitize") as sanitize,
+        mock.patch.object(erase, "_nvme_sanitize", side_effect=sanitize_rejected) as sanitize,
         mock.patch.object(erase, "_nvme_secure_discard_clear") as secure_discard,
         mock.patch.object(
             erase,
@@ -458,11 +464,13 @@ def test_hp_probook_640_g5_skips_native_nvme_sanitize_before_clear_exception():
     assert "temporary HP ProBook firmware-safe" in erase._clear_only_exception_reason(
         "HP | HP ProBook 450 G8 Notebook PC"
     )
-    assert "Native NVMe sanitize/format/secure-discard commands were skipped" in result["evidence"]
+    assert "Policy: NVMe Purge is always attempted as the primary wipe method" in result["evidence"]
+    assert "Primary NVMe Purge failed" in result["evidence"]
     assert "Firmware-safe Clear mode" in result["evidence"]
-    sanitize_actions.assert_not_called()
-    format_crypto.assert_not_called()
-    sanitize.assert_not_called()
+    sanitize_actions.assert_called_once()
+    assert sanitize_calls == [2, 4]
+    format_crypto.assert_called_once()
+    assert sanitize.call_count == 2
     user_data_format.assert_not_called()
     secure_discard.assert_not_called()
     software_zero.assert_called_once()

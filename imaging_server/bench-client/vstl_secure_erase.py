@@ -57,7 +57,7 @@ from typing import Callable, Optional
 
 
 _EVIDENCE_CAP = 6000
-SECURE_ERASE_CLIENT_BUILD = "secure-erase-safe-v4"
+SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v5"
 _NVME_CLEAR_ASSIST_METHODS = (
     "NVMe_FORMAT_USER_DATA",
     "NVMe_SECURE_DISCARD_CLEAR",
@@ -1393,15 +1393,15 @@ def run_secure_erase(
     if dtype == "NVMe":
         release_ev = _release_block_device(device)
         evidence_blocks.append("[pre-erase device release]\n" + release_ev)
-        if clear_exception_reason:
+        evidence_blocks.append("Policy: NVMe Purge is always attempted as the primary wipe method.")
+        ok, method = _run_nvme_purge_sequence(
+            device, evidence_blocks, tried, progress_callback, "initial primary",
+        )
+        if not ok and clear_exception_reason:
             evidence_blocks.append(
-                f"{clear_exception_reason}; skipping native NVMe sanitize and "
-                "crypto-format commands for this platform because they can "
-                "hard-stop firmware on some units. Running Clear assist only."
-            )
-            evidence_blocks.append(
-                "Running firmware-safe Clear method NVMe_SOFTWARE_ZERO_CLEAR "
-                "under the temporary model exception policy."
+                f"Primary NVMe Purge failed on {clear_exception_reason}; "
+                "running firmware-safe Clear fallback only after the primary "
+                "Purge attempt."
             )
             clear_ok, clear_method, clear_ev = _run_nvme_clear_assist(
                 device, drive, progress_callback, firmware_safe_only=True,
@@ -1413,10 +1413,9 @@ def run_secure_erase(
                 clear_only_exception = True
                 clear_only_exception_reason = clear_exception_reason
                 evidence_blocks.append(
-                    f"Clear assist completed using {clear_method}; final NVMe "
-                    f"Purge retry skipped by {clear_exception_reason}. Native "
-                    "NVMe sanitize/format/secure-discard commands were skipped "
-                    "as a shutdown guard."
+                    f"Clear assist completed using {clear_method}; primary NVMe "
+                    f"Purge was attempted first and failed; final NVMe Purge "
+                    f"retry skipped by {clear_exception_reason}."
                 )
             else:
                 evidence_blocks.append(
@@ -1424,42 +1423,38 @@ def run_secure_erase(
                     f"{clear_method or ', '.join(_NVME_CLEAR_ASSIST_METHODS)}. "
                     "The drive was not certified."
                 )
-        else:
-            ok, method = _run_nvme_purge_sequence(
-                device, evidence_blocks, tried, progress_callback, "initial",
+        elif not ok:
+            evidence_blocks.append(
+                "Direct NVMe purge failed; running Clear assist methods "
+                f"{', '.join(_NVME_CLEAR_ASSIST_METHODS)} before the required "
+                "final Purge retry. Clear assist is not certificate-eligible."
             )
-            if not ok:
+            clear_ok, clear_method, clear_ev = _run_nvme_clear_assist(
+                device, drive, progress_callback,
+            )
+            evidence_blocks.append("[NVMe Clear assist]\n" + clear_ev)
+            if clear_ok:
                 evidence_blocks.append(
-                    "Direct NVMe purge failed; running Clear assist methods "
-                    f"{', '.join(_NVME_CLEAR_ASSIST_METHODS)} before the required "
-                    "final Purge retry. Clear assist is not certificate-eligible."
+                    f"Clear assist completed using {clear_method}; final NVMe "
+                    "Purge retry is required before certification."
                 )
-                clear_ok, clear_method, clear_ev = _run_nvme_clear_assist(
-                    device, drive, progress_callback,
+                evidence_blocks.append(
+                    "[post-clear device release]\n" + _release_block_device(device)
                 )
-                evidence_blocks.append("[NVMe Clear assist]\n" + clear_ev)
-                if clear_ok:
+                ok, method = _run_nvme_purge_sequence(
+                    device, evidence_blocks, tried, progress_callback, "post-clear",
+                )
+                if not ok:
                     evidence_blocks.append(
-                        f"Clear assist completed using {clear_method}; final NVMe "
-                        "Purge retry is required before certification."
+                        "Clear assist completed; final NVMe Purge retry still "
+                        "failed. Certification remains blocked."
                     )
-                    evidence_blocks.append(
-                        "[post-clear device release]\n" + _release_block_device(device)
-                    )
-                    ok, method = _run_nvme_purge_sequence(
-                        device, evidence_blocks, tried, progress_callback, "post-clear",
-                    )
-                    if not ok:
-                        evidence_blocks.append(
-                            "Clear assist completed; final NVMe Purge retry still "
-                            "failed. Certification remains blocked."
-                        )
-                else:
-                    evidence_blocks.append(
-                        f"Clear assist failed before final NVMe Purge retry; tried "
-                        f"{clear_method or ', '.join(_NVME_CLEAR_ASSIST_METHODS)}. "
-                        "Certification remains blocked."
-                    )
+            else:
+                evidence_blocks.append(
+                    f"Clear assist failed before final NVMe Purge retry; tried "
+                    f"{clear_method or ', '.join(_NVME_CLEAR_ASSIST_METHODS)}. "
+                    "Certification remains blocked."
+                )
     elif dtype == "SATA_SSD":
         ok, method = _run_sata_purge_sequence(
             device, evidence_blocks, tried, progress_callback, "initial",

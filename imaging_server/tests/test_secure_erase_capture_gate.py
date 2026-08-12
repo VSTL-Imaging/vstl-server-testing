@@ -972,6 +972,16 @@ def test_clear_class_methods_are_certificate_mapped_only_for_model_exception():
     assert 'result["certificate_status"] = "refused"' in TUI
 
 
+def test_tui_secure_erase_retry_is_failure_only():
+    assert "secure erase program error" in TUI
+    assert "[ R ] Retry Secure Erase" in TUI
+    assert "R retry secure erase   ENTER continue   Q quit" in TUI
+    assert 'if allow_retry and not result.get("ok")' in TUI
+    assert 'allow_retry=not result.get("ok")' in TUI
+    assert 'if result_action == "retry":' in TUI
+    assert "_retry_confirmed=True" in TUI
+
+
 def test_sata_ssd_blkdiscard_assist_then_final_purge_retry_can_certify():
     drive = _drive(
         device="/dev/sda",

@@ -40,6 +40,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -7572,6 +7573,9 @@ def screen_run_erase(stdscr, drive: dict) -> dict:
     state = {"method": "auto-detect…", "phase": "starting…",
              "elapsed_sec": 0, "percent": None}
 
+    started_at = datetime.now(timezone.utc).isoformat()
+    started_ts = time.monotonic()
+
     def _progress(ev: dict) -> None:
         state.update({
             "method":      ev.get("method", state["method"]),
@@ -7582,7 +7586,26 @@ def screen_run_erase(stdscr, drive: dict) -> dict:
         _draw_erase_progress(stdscr, drive, state)
 
     _draw_erase_progress(stdscr, drive, state)
-    result = se.run_secure_erase(drive=drive, progress_callback=_progress)
+    try:
+        result = se.run_secure_erase(drive=drive, progress_callback=_progress)
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "method": state.get("method") or "",
+            "standard": "",
+            "passes": 0,
+            "started_at": started_at,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_sec": int(time.monotonic() - started_ts),
+            "device": drive.get("device", ""),
+            "device_type": drive.get("device_type", "UNKNOWN"),
+            "device_model": drive.get("device_model", ""),
+            "device_size_gb": drive.get("device_size_gb", 0),
+            "verified": False,
+            "verification_method": "skipped",
+            "evidence": traceback.format_exc()[-4000:],
+            "error_message": f"secure erase program error: {exc}",
+        }
     state["method"] = result.get("method") or state["method"]
     state["phase"] = "completed" if result.get("ok") else "failed"
     _draw_erase_progress(stdscr, drive, state)
@@ -7592,8 +7615,9 @@ def screen_run_erase(stdscr, drive: dict) -> dict:
 
 def screen_erase_result(stdscr, result: dict, cert_resp: dict,
                          cert_ok: bool,
-                         reporting_suppressed: bool = False) -> None:
-    """Show summary + verification hash. Operator presses ENTER to continue."""
+                         reporting_suppressed: bool = False,
+                         allow_retry: bool = False) -> str:
+    """Show summary + verification hash. Returns continue or retry."""
     stdscr.erase()
     _h, w = stdscr.getmaxyx()
     if result.get("ok") and reporting_suppressed:
@@ -7647,6 +7671,12 @@ def screen_erase_result(stdscr, result: dict, cert_resp: dict,
             break_on_hyphens=False,
         ) or ["erase failed"]
         detail_lines = [(line, curses.color_pair(RED_PAIR)) for line in wrapped]
+        if allow_retry:
+            detail_lines.append(("", 0))
+            detail_lines.append((
+                "[ R ] Retry Secure Erase",
+                curses.A_BOLD | curses.color_pair(YELLOW_PAIR),
+            ))
 
     lines = [top_line, ("", 0)]
     if detail_lines:
@@ -7677,12 +7707,19 @@ def screen_erase_result(stdscr, result: dict, cert_resp: dict,
         lines.append((f"Verify   : ...{cert_resp.get('verification_hash','')[-32:]}",
                       curses.color_pair(DIM_PAIR)))
     center_block(stdscr, lines, top_offset=3)
-    draw_footer(stdscr, "ENTER to continue   Q to quit")
+    footer = (
+        "R retry secure erase   ENTER continue   Q quit"
+        if allow_retry and not result.get("ok")
+        else "ENTER to continue   Q to quit"
+    )
+    draw_footer(stdscr, footer)
     stdscr.refresh()
     while True:
         ch = stdscr.getch()
+        if allow_retry and not result.get("ok") and ch in (ord("r"), ord("R")):
+            return "retry"
         if ch in (10, 13, curses.KEY_ENTER):
-            return
+            return "continue"
         if ch in (ord("q"), ord("Q")):
             sys.exit(2)
 
@@ -8618,7 +8655,8 @@ def _check_secure_erase_authorization(
 
 def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
                          tech: str, operator: dict | None = None,
-                         suppress_reporting: bool = False) -> Optional[dict]:
+                         suppress_reporting: bool = False,
+                         _retry_confirmed: bool = False) -> Optional[dict]:
     """Run the full Phase-3 Secure Erase sub-flow:
        detect drive -> confirm -> wipe -> POST certificate -> show result.
     Returns the wipe result dict (or None if operator cancelled)."""
@@ -8628,7 +8666,7 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
                       f"Drive detection failed: {drive.get('error','no disk found')}",
                       color=RED_PAIR, secs=4)
         return None
-    if not screen_erase_intro(stdscr, drive):
+    if not _retry_confirmed and not screen_erase_intro(stdscr, drive):
         return None  # cancelled
     result = screen_run_erase(stdscr, drive)
     allow_clear_exception = _clear_exception_allowed(result, ident)
@@ -8778,13 +8816,24 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
         result["local_report_post_ok"] = bool(report_ok)
         result["local_report_post_message"] = report_msg
 
-    screen_erase_result(
+    result_action = screen_erase_result(
         stdscr,
         result,
         cert_resp,
         cert_ok,
         reporting_suppressed=suppress_reporting,
+        allow_retry=not result.get("ok"),
     )
+    if result_action == "retry":
+        return phase3_secure_erase(
+            stdscr,
+            ident,
+            cfg,
+            tech,
+            operator,
+            suppress_reporting=suppress_reporting,
+            _retry_confirmed=True,
+        )
     return {
         "result": result,
         "certificate": cert_resp,

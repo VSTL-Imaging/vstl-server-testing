@@ -58,7 +58,7 @@ from typing import Callable, Optional
 
 
 _EVIDENCE_CAP = 6000
-SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v6"
+SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v7"
 _CONSOLE_KEEPALIVE_LOCK = threading.Lock()
 _CONSOLE_KEEPALIVE_STARTED = False
 _NVME_CLEAR_ASSIST_METHODS = (
@@ -291,6 +291,27 @@ def _clear_only_exception_reason(profile: str | None = None) -> str:
             and all(re.search(rf"\b{re.escape(token)}\b", normalized) is not None for token in model_tokens)
         ):
             return reason
+    return ""
+
+
+def _nvme_sanitize_screen_blank_risk_reason(profile: str | None = None) -> str:
+    """Return why this platform should skip NVMe sanitize opcodes.
+
+    HP ProBook 640 G5 units have been observed to stay powered while the panel
+    goes blank during native NVMe sanitize. NVMe Format Crypto is still a
+    Purge-class primary attempt, so this model-specific guard preserves the
+    Purge-primary policy while avoiding the opcode that blanks the screen.
+    """
+    normalized = re.sub(r"[^a-z0-9]+", " ", (profile or _system_dmi_profile()).lower())
+    compact = normalized.replace(" ", "")
+    words = normalized.split()
+    is_hp = "hp" in words or "hewlettpackard" in compact
+    is_probook_640_g5 = (
+        "probook" in words
+        and all(token in words for token in ("640", "g5"))
+    )
+    if is_hp and (is_probook_640_g5 or "5pf18av" in compact):
+        return "temporary HP ProBook 640 G5 NVMe sanitize screen-blank policy"
     return ""
 
 
@@ -1308,22 +1329,29 @@ def _run_nvme_purge_sequence(
     tried: list[str],
     progress_callback: Optional[Callable[[dict], None]],
     attempt_label: str,
+    skip_sanitize_reason: str = "",
 ) -> tuple[bool, str]:
     evidence_blocks.append(f"[{attempt_label} NVMe purge attempt]")
-    sanitize_actions, support_ev = _nvme_sanitize_actions(device)
-    evidence_blocks.append(support_ev)
-    for action in sanitize_actions:
-        ok, method, ev = _nvme_sanitize(
-            device, action=action, progress=progress_callback,
+    if skip_sanitize_reason:
+        evidence_blocks.append(
+            f"Skipped NVMe sanitize opcodes for {skip_sanitize_reason}; "
+            "trying NVMe Format Crypto as the primary Purge method."
         )
-        tried.append(
-            _NVME_SANITIZE_ACTION_LABELS.get(
-                action, f"NVMe_SANITIZE_ACTION_{action}"
+    else:
+        sanitize_actions, support_ev = _nvme_sanitize_actions(device)
+        evidence_blocks.append(support_ev)
+        for action in sanitize_actions:
+            ok, method, ev = _nvme_sanitize(
+                device, action=action, progress=progress_callback,
             )
-        )
-        evidence_blocks.append(ev)
-        if ok:
-            return True, method
+            tried.append(
+                _NVME_SANITIZE_ACTION_LABELS.get(
+                    action, f"NVMe_SANITIZE_ACTION_{action}"
+                )
+            )
+            evidence_blocks.append(ev)
+            if ok:
+                return True, method
     ok, method, ev = _nvme_format_crypto(device)
     tried.append("NVMe_FORMAT_CRYPTO")
     evidence_blocks.append(ev)
@@ -1446,6 +1474,7 @@ def run_secure_erase(
     clear_only_exception = False
     clear_only_exception_reason = ""
     clear_exception_reason = _clear_only_exception_reason()
+    sanitize_screen_blank_reason = _nvme_sanitize_screen_blank_risk_reason()
     evidence_blocks.append("[operator console keepalive]\n" + _ensure_erase_console_keepalive())
     power_ok, power_ev, power_error = _erase_power_guard()
     evidence_blocks.append("[power stability]\n" + power_ev)
@@ -1474,7 +1503,12 @@ def run_secure_erase(
         evidence_blocks.append("[pre-erase device release]\n" + release_ev)
         evidence_blocks.append("Policy: NVMe Purge is always attempted as the primary wipe method.")
         ok, method = _run_nvme_purge_sequence(
-            device, evidence_blocks, tried, progress_callback, "initial primary",
+            device,
+            evidence_blocks,
+            tried,
+            progress_callback,
+            "initial primary",
+            skip_sanitize_reason=sanitize_screen_blank_reason,
         )
         if not ok and clear_exception_reason:
             evidence_blocks.append(

@@ -342,7 +342,7 @@ def test_secure_erase_blocks_when_battery_has_no_external_power():
 
 
 def test_secure_erase_keeps_operator_console_awake_during_long_runs():
-    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v6"' in ERASE
+    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v7"' in ERASE
     assert "def _ensure_erase_console_keepalive" in ERASE
     assert "setterm --blank 0 --powerdown 0 --powersave off" in ERASE
     assert "/sys/module/kernel/parameters/consoleblank" in ERASE
@@ -434,12 +434,16 @@ def test_hp_elitebook_640_g10_can_complete_with_clear_without_final_purge_retry(
     software_zero.assert_called_once()
 
 
-def test_hp_probook_640_g5_attempts_purge_before_firmware_safe_clear_exception():
-    sanitize_calls = []
+def test_hp_probook_640_g5_uses_format_crypto_purge_before_firmware_safe_clear_exception():
+    calls = []
 
-    def sanitize_rejected(device, action, progress=None):
-        sanitize_calls.append(action)
-        return False, erase._NVME_SANITIZE_ACTION_LABELS[action], f"sanitize {action} rejected"
+    def format_crypto_rejected(device):
+        calls.append("format-crypto")
+        return False, "NVMe_FORMAT_CRYPTO", "crypto rejected"
+
+    def software_zero(device, **kwargs):
+        calls.append("software-zero")
+        return True, "NVMe_SOFTWARE_ZERO_CLEAR", "zero fill completed"
 
     with (
         mock.patch.object(
@@ -448,16 +452,12 @@ def test_hp_probook_640_g5_attempts_purge_before_firmware_safe_clear_exception()
             return_value="HP | HP ProBook 640 G5 Notebook PC | 5PF18AV",
         ),
         mock.patch.object(erase, "_release_block_device", return_value="released"),
-        mock.patch.object(erase, "_nvme_sanitize_actions", return_value=([2, 4], "sanicap=0x00000003")) as sanitize_actions,
-        mock.patch.object(erase, "_nvme_format_crypto", return_value=(False, "NVMe_FORMAT_CRYPTO", "crypto rejected")) as format_crypto,
+        mock.patch.object(erase, "_nvme_sanitize_actions") as sanitize_actions,
+        mock.patch.object(erase, "_nvme_format_crypto", side_effect=format_crypto_rejected) as format_crypto,
         mock.patch.object(erase, "_nvme_format_user_data") as user_data_format,
-        mock.patch.object(erase, "_nvme_sanitize", side_effect=sanitize_rejected) as sanitize,
+        mock.patch.object(erase, "_nvme_sanitize") as sanitize,
         mock.patch.object(erase, "_nvme_secure_discard_clear") as secure_discard,
-        mock.patch.object(
-            erase,
-            "_software_zero_clear",
-            return_value=(True, "NVMe_SOFTWARE_ZERO_CLEAR", "zero fill completed"),
-        ) as software_zero,
+        mock.patch.object(erase, "_software_zero_clear", side_effect=software_zero) as software_zero_clear,
         mock.patch.object(erase, "_verify_wipe_sample", return_value=(True, "sample clear")),
     ):
         result = erase.run_secure_erase(_drive())
@@ -473,17 +473,27 @@ def test_hp_probook_640_g5_attempts_purge_before_firmware_safe_clear_exception()
     assert "temporary HP ProBook firmware-safe" in erase._clear_only_exception_reason(
         "HP | HP ProBook 450 G8 Notebook PC"
     )
+    assert "temporary HP ProBook 640 G5 NVMe sanitize screen-blank" in (
+        erase._nvme_sanitize_screen_blank_risk_reason(
+            "HP | HP ProBook 640 G5 Notebook PC | 5PF18AV"
+        )
+    )
+    assert not erase._nvme_sanitize_screen_blank_risk_reason(
+        "HP | HP EliteBook 640 G10 Notebook PC"
+    )
     assert "Policy: NVMe Purge is always attempted as the primary wipe method" in result["evidence"]
+    assert "Skipped NVMe sanitize opcodes for temporary HP ProBook 640 G5" in result["evidence"]
+    assert "trying NVMe Format Crypto as the primary Purge method" in result["evidence"]
     assert "Primary NVMe Purge failed" in result["evidence"]
     assert "Firmware-safe Clear mode" in result["evidence"]
-    sanitize_actions.assert_called_once()
-    assert sanitize_calls == [2, 4]
+    sanitize_actions.assert_not_called()
+    assert calls == ["format-crypto", "software-zero"]
     format_crypto.assert_called_once()
-    assert sanitize.call_count == 2
+    sanitize.assert_not_called()
     user_data_format.assert_not_called()
     secure_discard.assert_not_called()
-    software_zero.assert_called_once()
-    zero_kwargs = software_zero.call_args.kwargs
+    software_zero_clear.assert_called_once()
+    zero_kwargs = software_zero_clear.call_args.kwargs
     assert zero_kwargs["chunk_size"] == 4 * 1024 * 1024
     assert zero_kwargs["max_mib_per_sec"] == 48
 

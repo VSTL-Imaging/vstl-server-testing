@@ -7321,6 +7321,8 @@ def _clear_only_exception_reason(ident: dict | None) -> str:
         (("hp", "hewlettpackard"), "elitebook", ("850", "g5"), "temporary HP EliteBook 850 G5 clear-only policy"),
         (("hp", "hewlettpackard"), "elitebook", ("850", "g6"), "temporary HP EliteBook 850 G6 clear-only policy"),
         (("hp", "hewlettpackard"), "probook", ("640", "g5"), "temporary HP ProBook 640 G5 clear-only policy"),
+        (("hp", "hewlettpackard"), "elitebook", (), "temporary HP EliteBook firmware-safe clear-only policy"),
+        (("hp", "hewlettpackard"), "probook", (), "temporary HP ProBook firmware-safe clear-only policy"),
         (("dell",), "latitude", ("5330",), "temporary Dell Latitude 5330 clear-only policy"),
         (("dell",), "latitude", ("5440",), "temporary Dell Latitude 5440 clear-only policy"),
         (("dell",), "latitude", ("5520",), "temporary Dell Latitude 5520 clear-only policy"),
@@ -7514,6 +7516,8 @@ def screen_erase_intro(stdscr, drive: dict) -> bool:
              curses.color_pair(DIM_PAIR)),
             (f"Capacity : {drive.get('device_size_gb',0)} GB",
              curses.color_pair(DIM_PAIR)),
+            (f"Erase build: {getattr(se, 'SECURE_ERASE_CLIENT_BUILD', 'unknown')}",
+             curses.color_pair(DIM_PAIR)),
             ("", 0),
             ("The strongest applicable sanitize will be auto-picked",
              curses.color_pair(DIM_PAIR)),
@@ -7540,6 +7544,8 @@ def _draw_erase_progress(stdscr, drive: dict,
     stdscr.erase()
     draw_header(stdscr, "Phase 3 — Wiping drive…")
     lines = [
+        (f"Build    : {getattr(se, 'SECURE_ERASE_CLIENT_BUILD', 'unknown')}",
+         curses.color_pair(DIM_PAIR)),
         (f"Device   : {drive.get('device','')}", curses.A_BOLD),
         (f"Method   : {state.get('method','auto-detect…')}",
          curses.color_pair(CYAN_PAIR) | curses.A_BOLD),

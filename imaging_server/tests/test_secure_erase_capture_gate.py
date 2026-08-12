@@ -323,6 +323,23 @@ def test_drive_detection_returns_serial_wwn_and_exact_byte_capacity():
     assert drive["device_size_bytes"] == 256_060_514_304
 
 
+def test_secure_erase_blocks_when_battery_has_no_external_power():
+    with (
+        mock.patch.object(
+            erase,
+            "_erase_power_guard",
+            return_value=(False, "BAT0: type=battery online=? status=Discharging", "AC power is not detected."),
+        ),
+        mock.patch.object(erase, "_release_block_device") as release,
+    ):
+        result = erase.run_secure_erase(_drive())
+
+    assert not result["ok"]
+    assert "AC power is not detected" in result["error_message"]
+    assert "BAT0" in result["evidence"]
+    release.assert_not_called()
+
+
 def test_nvme_clear_assist_then_final_purge_retry_can_certify():
     calls = []
 
@@ -438,6 +455,9 @@ def test_hp_probook_640_g5_skips_native_nvme_sanitize_before_clear_exception():
     assert "temporary HP ProBook 640 G5" in erase._clear_only_exception_reason(
         "HP | 5PF18AV"
     )
+    assert "temporary HP ProBook firmware-safe" in erase._clear_only_exception_reason(
+        "HP | HP ProBook 450 G8 Notebook PC"
+    )
     assert "Native NVMe sanitize/format/secure-discard commands were skipped" in result["evidence"]
     assert "Firmware-safe Clear mode" in result["evidence"]
     sanitize_actions.assert_not_called()
@@ -446,6 +466,9 @@ def test_hp_probook_640_g5_skips_native_nvme_sanitize_before_clear_exception():
     user_data_format.assert_not_called()
     secure_discard.assert_not_called()
     software_zero.assert_called_once()
+    zero_kwargs = software_zero.call_args.kwargs
+    assert zero_kwargs["chunk_size"] == 4 * 1024 * 1024
+    assert zero_kwargs["max_mib_per_sec"] == 48
 
 
 def test_hp_elitebook_850_g5_can_complete_with_clear_without_final_purge_retry():
@@ -908,6 +931,7 @@ def test_nvme_sanitize_unparseable_status_fails_quickly():
 
 def test_clear_class_methods_are_certificate_mapped_only_for_model_exception():
     assert '"NVMe_SANITIZE_OVERWRITE": "NIST SP 800-88 Purge"' in TUI
+    assert "SECURE_ERASE_CLIENT_BUILD" in TUI
     assert "_CLEAR_WIPE_METHOD_STANDARDS = {" in TUI
     assert '"NVMe_FORMAT_USER_DATA": "NIST SP 800-88 Clear"' in TUI
     assert '"NVMe_SECURE_DISCARD_CLEAR": "NIST SP 800-88 Clear"' in TUI
@@ -918,6 +942,8 @@ def test_clear_class_methods_are_certificate_mapped_only_for_model_exception():
     assert "temporary HP EliteBook 850 G5 clear-only policy" in TUI
     assert "temporary HP EliteBook 850 G6 clear-only policy" in TUI
     assert "temporary HP ProBook 640 G5 clear-only policy" in TUI
+    assert "temporary HP EliteBook firmware-safe clear-only policy" in TUI
+    assert "temporary HP ProBook firmware-safe clear-only policy" in TUI
     assert "5pf18av" in TUI
     assert "temporary Dell Latitude 5330 clear-only policy" in TUI
     assert "temporary Dell Latitude 5440 clear-only policy" in TUI

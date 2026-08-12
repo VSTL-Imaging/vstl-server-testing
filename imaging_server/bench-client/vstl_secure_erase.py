@@ -57,6 +57,7 @@ from typing import Callable, Optional
 
 
 _EVIDENCE_CAP = 6000
+SECURE_ERASE_CLIENT_BUILD = "secure-erase-safe-v4"
 _NVME_CLEAR_ASSIST_METHODS = (
     "NVMe_FORMAT_USER_DATA",
     "NVMe_SECURE_DISCARD_CLEAR",
@@ -77,6 +78,8 @@ _CLEAR_ONLY_EXCEPTION_MODELS = (
     (("hp", "hewlettpackard"), "elitebook", ("850", "g5"), "temporary HP EliteBook 850 G5 clear-only policy"),
     (("hp", "hewlettpackard"), "elitebook", ("850", "g6"), "temporary HP EliteBook 850 G6 clear-only policy"),
     (("hp", "hewlettpackard"), "probook", ("640", "g5"), "temporary HP ProBook 640 G5 clear-only policy"),
+    (("hp", "hewlettpackard"), "elitebook", (), "temporary HP EliteBook firmware-safe clear-only policy"),
+    (("hp", "hewlettpackard"), "probook", (), "temporary HP ProBook firmware-safe clear-only policy"),
     (("dell",), "latitude", ("5330",), "temporary Dell Latitude 5330 clear-only policy"),
     (("dell",), "latitude", ("5440",), "temporary Dell Latitude 5440 clear-only policy"),
     (("dell",), "latitude", ("5520",), "temporary Dell Latitude 5520 clear-only policy"),
@@ -126,6 +129,62 @@ def _read_sysfs_text(path: str) -> str:
             return handle.read().strip()
     except OSError:
         return ""
+
+
+def _power_supply_entries() -> list[str]:
+    base = "/sys/class/power_supply"
+    try:
+        return sorted(os.listdir(base))
+    except OSError:
+        return []
+
+
+def _power_supply_type(entry: str) -> str:
+    return _read_sysfs_text(f"/sys/class/power_supply/{entry}/type").lower()
+
+
+def _power_supply_online(entry: str) -> str:
+    return _read_sysfs_text(f"/sys/class/power_supply/{entry}/online")
+
+
+def _erase_power_guard() -> tuple[bool, str, str]:
+    """Return whether destructive erase may start from a power-safety view.
+
+    Laptops that run a full-drive zero fill on battery can hard power off when
+    the battery or adapter is weak. Desktops often have no power_supply nodes,
+    so only block when a battery is present and no external supply is online.
+    """
+    entries = _power_supply_entries()
+    if not entries:
+        return True, "no /sys/class/power_supply entries; assuming non-battery system", ""
+
+    evidence: list[str] = []
+    has_battery = False
+    external_online = False
+    for entry in entries:
+        supply_type = _power_supply_type(entry)
+        online = _power_supply_online(entry)
+        status = _read_sysfs_text(f"/sys/class/power_supply/{entry}/status")
+        capacity = _read_sysfs_text(f"/sys/class/power_supply/{entry}/capacity")
+        evidence.append(
+            f"{entry}: type={supply_type or '?'} online={online or '?'} "
+            f"status={status or '?'} capacity={capacity or '?'}"
+        )
+        name = entry.upper()
+        if supply_type == "battery" or name.startswith("BAT"):
+            has_battery = True
+            continue
+        if online == "1":
+            external_online = True
+
+    if has_battery and not external_online:
+        return (
+            False,
+            "\n".join(evidence),
+            "AC power is not detected. Connect the charger before secure erase; "
+            "the unit is shutting down under erase load.",
+        )
+    return True, "\n".join(evidence), ""
 
 
 def _system_dmi_profile() -> str:
@@ -1012,6 +1071,7 @@ def _software_zero_clear(
     progress: Optional[Callable[[dict], None]] = None,
     size_bytes: int = 0,
     chunk_size: int = 16 * 1024 * 1024,
+    max_mib_per_sec: float = 0,
 ) -> tuple[bool, str, str]:
     """Overwrite the user-addressable namespace as a Clear assist.
 
@@ -1026,6 +1086,21 @@ def _software_zero_clear(
     except (TypeError, ValueError):
         total = 0
     try:
+        if chunk_size <= 0:
+            chunk_size = 16 * 1024 * 1024
+        try:
+            env_chunk = int(os.environ.get("VSTL_ZERO_CLEAR_CHUNK_BYTES", "0") or "0")
+            if env_chunk > 0:
+                chunk_size = env_chunk
+        except ValueError:
+            pass
+        try:
+            env_rate = float(os.environ.get("VSTL_ZERO_CLEAR_MAX_MIB_PER_SEC", "0") or "0")
+            if env_rate > 0:
+                max_mib_per_sec = env_rate
+        except ValueError:
+            pass
+        bytes_per_sec = float(max_mib_per_sec) * 1024 * 1024 if max_mib_per_sec else 0
         zero_chunk = b"\x00" * chunk_size
         with open(device, "r+b", buffering=0) as handle:
             if total <= 0:
@@ -1049,11 +1124,21 @@ def _software_zero_clear(
                     )
                 written += int(n)
                 now = time.monotonic()
+                if bytes_per_sec > 0:
+                    target_elapsed = written / bytes_per_sec
+                    actual_elapsed = now - started
+                    if target_elapsed > actual_elapsed:
+                        time.sleep(min(1.0, target_elapsed - actual_elapsed))
+                        now = time.monotonic()
                 percent = int((written * 100) / total)
                 if progress and (percent != last_progress or now - last_update >= 2):
                     progress({
                         "elapsed_sec": int(now - started),
-                        "phase": "clear assist: zero-filling user-addressable namespace",
+                        "phase": (
+                            "clear assist: throttled zero-fill"
+                            if bytes_per_sec > 0
+                            else "clear assist: zero-filling user-addressable namespace"
+                        ),
                         "method": label,
                         "percent": percent,
                     })
@@ -1073,6 +1158,7 @@ def _software_zero_clear(
             f"$ software-zero-clear {device}\n"
             f"bytes_written={total}\n"
             f"chunk_size={chunk_size}\n"
+            f"max_mib_per_sec={max_mib_per_sec}\n"
             f"duration_sec={int(time.monotonic() - started)}\n"
             f"$ blockdev --flushbufs {device}\nrc={rc_f}\n{out_f}\n{err_f}"
         )
@@ -1179,6 +1265,8 @@ def _run_nvme_clear_assist(
             device,
             progress=progress_callback,
             size_bytes=int(drive.get("device_size_bytes") or 0),
+            chunk_size=4 * 1024 * 1024 if firmware_safe_only else 16 * 1024 * 1024,
+            max_mib_per_sec=48 if firmware_safe_only else 0,
         ),
     )
     if firmware_safe_only:
@@ -1280,6 +1368,27 @@ def run_secure_erase(
     clear_only_exception = False
     clear_only_exception_reason = ""
     clear_exception_reason = _clear_only_exception_reason()
+    power_ok, power_ev, power_error = _erase_power_guard()
+    evidence_blocks.append("[power stability]\n" + power_ev)
+    if not power_ok:
+        completed_at = _now_iso()
+        return {
+            "ok": False,
+            "method": "",
+            "standard": "",
+            "passes": 0,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_sec": int(time.monotonic() - started_ts),
+            "device": device,
+            "device_type": dtype,
+            "device_model": drive.get("device_model", ""),
+            "device_size_gb": drive.get("device_size_gb", 0),
+            "verified": False,
+            "verification_method": "skipped",
+            "evidence": _cap_evidence("\n---\n".join(evidence_blocks)),
+            "error_message": power_error,
+        }
 
     if dtype == "NVMe":
         release_ev = _release_block_device(device)

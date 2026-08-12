@@ -342,11 +342,14 @@ def test_secure_erase_blocks_when_battery_has_no_external_power():
 
 
 def test_secure_erase_keeps_operator_console_awake_during_long_runs():
-    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v9"' in ERASE
+    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v10"' in ERASE
     assert "def _ensure_erase_console_keepalive" in ERASE
     assert "setterm --blank 0 --powerdown 0 --powersave off" in ERASE
     assert "/sys/module/kernel/parameters/consoleblank" in ERASE
     assert "/sys/class/graphics/fb*/blank" in ERASE
+    assert "def _recover_operator_console_after_erase" in ERASE
+    assert "max_brightness" in ERASE
+    assert "operator console recovery after erase" in ERASE
     assert "def _run_with_erase_heartbeat" in ERASE
     assert "running ATA Security Erase Enhanced" in ERASE
     assert "[operator console keepalive]" in ERASE
@@ -959,6 +962,8 @@ def test_clear_class_methods_are_certificate_mapped_only_for_model_exception():
     assert "SECURE_ERASE_CLIENT_BUILD" in TUI
     assert "vstl-secure-erase-worker" in TUI
     assert "se._keep_operator_console_awake()" in TUI
+    assert "se._recover_operator_console_after_erase()" in TUI
+    assert "_recover_erase_display(stdscr, \"secure-erase-result\")" in TUI
     assert "_CLEAR_WIPE_METHOD_STANDARDS = {" in TUI
     assert '"NVMe_FORMAT_USER_DATA": "NIST SP 800-88 Clear"' in TUI
     assert '"NVMe_SECURE_DISCARD_CLEAR": "NIST SP 800-88 Clear"' in TUI

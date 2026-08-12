@@ -7568,6 +7568,44 @@ def _draw_erase_progress(stdscr, drive: dict,
     stdscr.refresh()
 
 
+def _recover_erase_display(stdscr, screen_key: str = "secure-erase-recover") -> None:
+    """Wake the physical console and force curses to repaint after erase."""
+    try:
+        if hasattr(se, "_recover_operator_console_after_erase"):
+            se._recover_operator_console_after_erase()
+        elif hasattr(se, "_keep_operator_console_awake"):
+            se._keep_operator_console_awake()
+    except Exception:
+        pass
+    try:
+        curses.reset_prog_mode()
+    except curses.error:
+        pass
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    try:
+        stdscr.nodelay(False)
+        stdscr.bkgd(" ", curses.A_NORMAL)
+        stdscr.erase()
+        stdscr.clear()
+        stdscr.clearok(True)
+        stdscr.touchwin()
+        stdscr.redrawwin()
+        stdscr.refresh()
+        try:
+            curses.doupdate()
+        except curses.error:
+            pass
+    except curses.error:
+        pass
+    try:
+        _prepare_screen_transition(stdscr, screen_key)
+    except Exception:
+        pass
+
+
 def _screen_run_erase_legacy_blocking(stdscr, drive: dict) -> dict:
     """Execute the secure-erase run with a live progress redraw via
     the vstl_secure_erase.run_secure_erase progress_callback hook."""
@@ -7666,6 +7704,7 @@ def screen_run_erase(stdscr, drive: dict) -> dict:
         _draw_erase_progress(stdscr, drive, draw_state)
         time.sleep(1.0)
     worker.join(timeout=1.0)
+    _recover_erase_display(stdscr, "secure-erase-worker-complete")
 
     if error_holder:
         exc = error_holder.get("exc")
@@ -7706,6 +7745,7 @@ def screen_run_erase(stdscr, drive: dict) -> dict:
         }
     state["method"] = result.get("method") or state["method"]
     state["phase"] = "completed" if result.get("ok") else "failed"
+    _recover_erase_display(stdscr, "secure-erase-final-progress")
     _draw_erase_progress(stdscr, drive, state)
     time.sleep(1.0)
     return result
@@ -8914,6 +8954,7 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
         result["local_report_post_ok"] = bool(report_ok)
         result["local_report_post_message"] = report_msg
 
+    _recover_erase_display(stdscr, "secure-erase-result")
     result_action = screen_erase_result(
         stdscr,
         result,

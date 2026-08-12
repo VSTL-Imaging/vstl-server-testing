@@ -58,7 +58,7 @@ from typing import Callable, Optional
 
 
 _EVIDENCE_CAP = 6000
-SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v9"
+SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v10"
 _CONSOLE_KEEPALIVE_LOCK = threading.Lock()
 _CONSOLE_KEEPALIVE_STARTED = False
 _NVME_CLEAR_ASSIST_METHODS = (
@@ -161,6 +161,71 @@ echo "operator console keepalive applied"
 """
     rc, out, err = _run(["sh", "-c", script], timeout=5)
     return f"$ operator-console-keepalive\nrc={rc}\n{out}\n{err}".strip()
+
+
+def _recover_operator_console_after_erase() -> str:
+    """Force the local text console/panel back on after firmware erase calls.
+
+    A few laptop firmware/drive combinations complete ATA/NVMe purge commands
+    while leaving the panel blank. This helper is deliberately best-effort:
+    it must never change whether an erase is accepted, only help the operator
+    see the result screen again.
+    """
+    if os.environ.get("VSTL_DISABLE_CONSOLE_KEEPALIVE") == "1":
+        return "operator console recovery disabled by VSTL_DISABLE_CONSOLE_KEEPALIVE"
+    if os.name != "posix":
+        return "operator console recovery skipped on non-posix host"
+
+    script = r"""
+set +e
+active_tty="$(cat /sys/class/tty/tty0/active 2>/dev/null || true)"
+active_vt=""
+case "$active_tty" in
+  tty[0-9]*) active_vt="${active_tty#tty}" ;;
+esac
+if [ -z "$active_vt" ] && command -v fgconsole >/dev/null 2>&1; then
+  active_vt="$(fgconsole 2>/dev/null || true)"
+fi
+echo 0 > /sys/module/kernel/parameters/consoleblank 2>/dev/null || true
+for fb_blank in /sys/class/graphics/fb*/blank; do
+  [ -w "$fb_blank" ] && echo 0 > "$fb_blank" || true
+done
+for backlight in /sys/class/backlight/*; do
+  [ -d "$backlight" ] || continue
+  [ -w "$backlight/bl_power" ] && echo 0 > "$backlight/bl_power" || true
+  if [ -r "$backlight/max_brightness" ] && [ -w "$backlight/brightness" ]; then
+    max="$(cat "$backlight/max_brightness" 2>/dev/null || echo 0)"
+    cur="$(cat "$backlight/brightness" 2>/dev/null || echo 0)"
+    if [ "${max:-0}" -gt 0 ] 2>/dev/null; then
+      if [ -z "$cur" ] || [ "$cur" = "0" ]; then
+        echo "$max" > "$backlight/brightness" || true
+      fi
+    fi
+  fi
+done
+for dpms in /sys/class/drm/*/dpms; do
+  [ -w "$dpms" ] && echo On > "$dpms" || true
+done
+if command -v setterm >/dev/null 2>&1; then
+  for tty in /dev/tty0 /dev/tty1 /dev/console; do
+    [ -w "$tty" ] || continue
+    setterm --blank 0 --powerdown 0 --powersave off <"$tty" >"$tty" 2>/dev/null || true
+    setterm --blank poke <"$tty" >"$tty" 2>/dev/null || true
+    printf '\033[?25l\033[0m\033[H' >"$tty" 2>/dev/null || true
+  done
+fi
+if [ -n "$active_vt" ] && command -v chvt >/dev/null 2>&1; then
+  chvt "$active_vt" >/dev/null 2>&1 || true
+fi
+sleep 0.2
+echo "operator console recovery after erase applied"
+"""
+    rc, out, err = _run(["sh", "-c", script], timeout=8)
+    keepalive = _keep_operator_console_awake()
+    return (
+        f"$ operator-console-recover-after-erase\nrc={rc}\n{out}\n{err}\n"
+        f"{keepalive}"
+    ).strip()
 
 
 def _console_keepalive_worker(interval_sec: int = 5) -> None:
@@ -837,6 +902,7 @@ echo "resume completed"
 """
     rc, out, err = _run(["sh", "-c", script], timeout=180)
     evidence = f"$ ata-unfreeze suspend-resume\nrc={rc}\n{out}\n{err}"
+    evidence += "\n" + _recover_operator_console_after_erase()
     return rc == 0, evidence
 
 
@@ -1059,11 +1125,19 @@ def _run_with_erase_heartbeat(
         now = time.monotonic()
         if rc is not None:
             out, err = proc.communicate()
-            return rc, out or "", err or ""
+            recovery = _recover_operator_console_after_erase()
+            err_text = err or ""
+            if recovery:
+                err_text = (err_text + "\n" if err_text else "") + recovery
+            return rc, out or "", err_text
         if now - started > timeout:
             proc.kill()
             out, err = proc.communicate()
-            return 124, out or "", (err or "") + f"\ntimeout after {timeout}s"
+            recovery = _recover_operator_console_after_erase()
+            err_text = (err or "") + f"\ntimeout after {timeout}s"
+            if recovery:
+                err_text = (err_text + "\n" if err_text else "") + recovery
+            return 124, out or "", err_text
         if now - last_heartbeat >= heartbeat_sec:
             elapsed = int(now - started)
             _keep_operator_console_awake()
@@ -1708,6 +1782,11 @@ def run_secure_erase(
             "evidence": "",
             "error_message": f"unsupported device_type={dtype}",
         }
+
+    evidence_blocks.append(
+        "[operator console recovery after erase]\n"
+        + _recover_operator_console_after_erase()
+    )
 
     duration = int(time.monotonic() - started_ts)
     completed_at = _now_iso()

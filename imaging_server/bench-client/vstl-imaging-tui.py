@@ -7306,11 +7306,16 @@ def _compact_api_error(body: dict, raw_err: str) -> str:
 def _clear_only_exception_reason(ident: dict | None) -> str:
     text = " ".join(
         str((ident or {}).get(key) or "")
-        for key in ("brand", "model", "model_label", "product_name")
+        for key in ("brand", "model", "model_label", "product_name", "sku", "part_number")
     )
     normalized = re.sub(r"[^a-z0-9]+", " ", text.lower())
     compact = normalized.replace(" ", "")
     words = normalized.split()
+    for sku, reason in {
+        "5pf18av": "temporary HP ProBook 640 G5 clear-only policy",
+    }.items():
+        if sku in compact:
+            return reason
     for vendor_tokens, family, model_tokens, reason in (
         (("hp", "hewlettpackard"), "elitebook", ("640", "g10"), "temporary HP EliteBook 640 G10 clear-only policy"),
         (("hp", "hewlettpackard"), "elitebook", ("850", "g5"), "temporary HP EliteBook 850 G5 clear-only policy"),

@@ -69,6 +69,9 @@ _CLEAR_METHOD_STANDARDS = {
     "NVMe_SOFTWARE_ZERO_CLEAR": "NIST SP 800-88 Clear",
     "BLKDISCARD": "NIST SP 800-88 Clear",
 }
+_CLEAR_ONLY_EXCEPTION_SKUS = {
+    "5pf18av": "temporary HP ProBook 640 G5 clear-only policy",
+}
 _CLEAR_ONLY_EXCEPTION_MODELS = (
     (("hp", "hewlettpackard"), "elitebook", ("640", "g10"), "temporary HP EliteBook 640 G10 clear-only policy"),
     (("hp", "hewlettpackard"), "elitebook", ("850", "g5"), "temporary HP EliteBook 850 G5 clear-only policy"),
@@ -130,6 +133,8 @@ def _system_dmi_profile() -> str:
         _read_sysfs_text("/sys/class/dmi/id/sys_vendor"),
         _read_sysfs_text("/sys/class/dmi/id/product_name"),
         _read_sysfs_text("/sys/class/dmi/id/product_version"),
+        _read_sysfs_text("/sys/class/dmi/id/product_sku"),
+        _read_sysfs_text("/sys/class/dmi/id/product_family"),
         _read_sysfs_text("/sys/class/dmi/id/board_name"),
         _read_sysfs_text("/sys/class/dmi/id/bios_date"),
     ]
@@ -150,6 +155,9 @@ def _clear_only_exception_reason(profile: str | None = None) -> str:
     normalized = re.sub(r"[^a-z0-9]+", " ", (profile or _system_dmi_profile()).lower())
     compact = normalized.replace(" ", "")
     words = normalized.split()
+    for sku, reason in _CLEAR_ONLY_EXCEPTION_SKUS.items():
+        if sku in compact:
+            return reason
     for vendor_tokens, family, model_tokens, reason in _CLEAR_ONLY_EXCEPTION_MODELS:
         if (
             any(token in words or token in compact for token in vendor_tokens)
@@ -1162,20 +1170,29 @@ def _run_nvme_clear_assist(
     device: str,
     drive: dict,
     progress_callback: Optional[Callable[[dict], None]],
+    firmware_safe_only: bool = False,
 ) -> tuple[bool, str, str]:
     evidence_blocks = ["[clear assist device release]\n" + _release_block_device(device)]
-    clear_steps: list[tuple[str, Callable[[], tuple[bool, str, str]]]] = [
-        ("NVMe_FORMAT_USER_DATA", lambda: _nvme_format_user_data(device)),
-        ("NVMe_SECURE_DISCARD_CLEAR", lambda: _nvme_secure_discard_clear(device)),
-        (
-            "NVMe_SOFTWARE_ZERO_CLEAR",
-            lambda: _software_zero_clear(
-                device,
-                progress=progress_callback,
-                size_bytes=int(drive.get("device_size_bytes") or 0),
-            ),
+    zero_step = (
+        "NVMe_SOFTWARE_ZERO_CLEAR",
+        lambda: _software_zero_clear(
+            device,
+            progress=progress_callback,
+            size_bytes=int(drive.get("device_size_bytes") or 0),
         ),
-    ]
+    )
+    if firmware_safe_only:
+        evidence_blocks.append(
+            "Firmware-safe Clear mode: skipped NVMe format, sanitize, and "
+            "secure-discard opcodes; using OS-level zero fill only."
+        )
+        clear_steps = [zero_step]
+    else:
+        clear_steps: list[tuple[str, Callable[[], tuple[bool, str, str]]]] = [
+            ("NVMe_FORMAT_USER_DATA", lambda: _nvme_format_user_data(device)),
+            ("NVMe_SECURE_DISCARD_CLEAR", lambda: _nvme_secure_discard_clear(device)),
+            zero_step,
+        ]
 
     last_method = ""
     for label, runner in clear_steps:
@@ -1274,12 +1291,11 @@ def run_secure_erase(
                 "hard-stop firmware on some units. Running Clear assist only."
             )
             evidence_blocks.append(
-                "Running Clear assist methods "
-                f"{', '.join(_NVME_CLEAR_ASSIST_METHODS)} under the temporary "
-                "model exception policy."
+                "Running firmware-safe Clear method NVMe_SOFTWARE_ZERO_CLEAR "
+                "under the temporary model exception policy."
             )
             clear_ok, clear_method, clear_ev = _run_nvme_clear_assist(
-                device, drive, progress_callback,
+                device, drive, progress_callback, firmware_safe_only=True,
             )
             evidence_blocks.append("[NVMe Clear assist]\n" + clear_ev)
             if clear_ok:
@@ -1290,8 +1306,8 @@ def run_secure_erase(
                 evidence_blocks.append(
                     f"Clear assist completed using {clear_method}; final NVMe "
                     f"Purge retry skipped by {clear_exception_reason}. Native "
-                    "NVMe sanitize/crypto-format commands were skipped before "
-                    "clear as a shutdown guard."
+                    "NVMe sanitize/format/secure-discard commands were skipped "
+                    "as a shutdown guard."
                 )
             else:
                 evidence_blocks.append(

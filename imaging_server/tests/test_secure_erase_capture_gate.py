@@ -400,6 +400,42 @@ def test_hp_elitebook_640_g10_can_complete_with_clear_without_final_purge_retry(
     software_zero.assert_not_called()
 
 
+def test_hp_probook_640_g5_skips_native_nvme_sanitize_before_clear_exception():
+    with (
+        mock.patch.object(
+            erase,
+            "_system_dmi_profile",
+            return_value="HP | HP ProBook 640 G5 Notebook PC | 5PF18AV",
+        ),
+        mock.patch.object(erase, "_release_block_device", return_value="released"),
+        mock.patch.object(erase, "_nvme_sanitize_actions", return_value=([2, 4], "sanicap=0x00000003")) as sanitize_actions,
+        mock.patch.object(erase, "_nvme_format_crypto") as format_crypto,
+        mock.patch.object(
+            erase,
+            "_nvme_format_user_data",
+            return_value=(True, "NVMe_FORMAT_USER_DATA", "clear format completed"),
+        ) as user_data_format,
+        mock.patch.object(erase, "_nvme_sanitize") as sanitize,
+        mock.patch.object(erase, "_nvme_secure_discard_clear") as secure_discard,
+        mock.patch.object(erase, "_software_zero_clear") as software_zero,
+        mock.patch.object(erase, "_verify_wipe_sample", return_value=(True, "sample clear")),
+    ):
+        result = erase.run_secure_erase(_drive())
+
+    assert result["ok"]
+    assert result["method"] == "NVMe_FORMAT_USER_DATA"
+    assert result["standard"] == "NIST SP 800-88 Clear"
+    assert result["clear_only_exception"] is True
+    assert "temporary HP ProBook 640 G5 clear-only policy" in result["clear_only_exception_reason"]
+    assert "Native NVMe sanitize/crypto-format commands were skipped" in result["evidence"]
+    sanitize_actions.assert_not_called()
+    format_crypto.assert_not_called()
+    sanitize.assert_not_called()
+    user_data_format.assert_called_once()
+    secure_discard.assert_not_called()
+    software_zero.assert_not_called()
+
+
 def test_hp_elitebook_850_g5_can_complete_with_clear_without_final_purge_retry():
     with (
         mock.patch.object(
@@ -849,6 +885,7 @@ def test_clear_class_methods_are_certificate_mapped_only_for_model_exception():
     assert "and bool(_clear_only_exception_reason(ident))" in TUI
     assert "temporary HP EliteBook 850 G5 clear-only policy" in TUI
     assert "temporary HP EliteBook 850 G6 clear-only policy" in TUI
+    assert "temporary HP ProBook 640 G5 clear-only policy" in TUI
     assert "temporary Dell Latitude 5330 clear-only policy" in TUI
     assert "temporary Dell Latitude 5440 clear-only policy" in TUI
     assert "temporary Dell Latitude 5520 clear-only policy" in TUI

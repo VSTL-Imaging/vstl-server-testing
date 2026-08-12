@@ -1298,7 +1298,7 @@ def wifi_interfaces() -> list[str]:
 
     base = "/sys/class/net"
     try:
-        return sorted(
+        found = sorted(
             name for name in os.listdir(base)
             if (
                 not name.startswith("p2p-")
@@ -1309,7 +1309,21 @@ def wifi_interfaces() -> list[str]:
             )
         )
     except OSError:
-        return []
+        found = []
+    if found:
+        return found
+
+    nmcli = _run(
+        ["nmcli", "--terse", "--fields", "DEVICE,TYPE", "device", "status"],
+        timeout=5,
+    )
+    for line in nmcli.splitlines():
+        fields = _split_nmcli_line(line)
+        if len(fields) >= 2 and fields[1].strip().lower() == "wifi":
+            device = fields[0].strip()
+            if device and not device.startswith("p2p-"):
+                found.append(device)
+    return sorted(set(found))
 
 
 def _parse_wifi_scan(raw: str) -> tuple[set[str], int]:
@@ -1368,28 +1382,80 @@ def _parse_nmcli_wifi_scan(raw: str) -> tuple[set[str], int]:
     return ssids, max(count, len(ssids))
 
 
-def _nmcli_scan_wifi(iface: str, timeout: int) -> str:
+def _nmcli_scan_wifi(iface: str | None, timeout: int) -> str:
     if _run(["sh", "-c", "command -v nmcli"], timeout=3) == "":
         return ""
     _run(["systemctl", "start", "NetworkManager"], timeout=20)
     _run(["nmcli", "networking", "on"], timeout=5)
     _run(["nmcli", "radio", "wifi", "on"], timeout=5)
-    _run(["nmcli", "device", "set", iface, "managed", "yes"], timeout=5)
-    _run(
-        ["nmcli", "--wait", "12", "device", "wifi", "rescan", "ifname", iface],
-        timeout=max(timeout, 15),
-    )
+    if iface:
+        _run(["nmcli", "device", "set", iface, "managed", "yes"], timeout=5)
+        _run(
+            ["nmcli", "--wait", "12", "device", "wifi", "rescan", "ifname", iface],
+            timeout=max(timeout, 15),
+        )
+    else:
+        _run(
+            ["nmcli", "--wait", "12", "device", "wifi", "rescan"],
+            timeout=max(timeout, 15),
+        )
     time.sleep(0.5)
-    return _run(
-        [
-            "nmcli", "--terse", "--escape", "yes",
-            "--fields", "SSID,BSSID,SIGNAL",
-            "device", "wifi", "list",
-            "ifname", iface,
-            "--rescan", "yes",
-        ],
-        timeout=max(timeout, 20),
+    cmd = [
+        "nmcli", "--terse", "--escape", "yes",
+        "--fields", "SSID,BSSID,SIGNAL",
+        "device", "wifi", "list",
+    ]
+    if iface:
+        cmd.extend(["ifname", iface])
+    cmd.extend(["--rescan", "yes"])
+    return _run(cmd, timeout=max(timeout, 20))
+
+
+def _interface_has_default_route(iface: str) -> bool:
+    raw = _run(["ip", "route", "show", "default"], timeout=3)
+    return any(
+        re.search(rf"\bdev\s+{re.escape(iface)}\b", line)
+        for line in raw.splitlines()
     )
+
+
+def _prepare_wifi_scan_interface(iface: str) -> None:
+    """Put the Wi-Fi interface into a clean scan-ready state."""
+    _run(["rfkill", "unblock", "all"], timeout=4)
+    _run(["rfkill", "unblock", "wifi"], timeout=3)
+    _run(["nmcli", "device", "set", iface, "managed", "yes"], timeout=5)
+    if not _interface_has_default_route(iface):
+        _run(["ip", "link", "set", iface, "down"], timeout=3)
+        time.sleep(0.2)
+    _run(["ip", "link", "set", iface, "up"], timeout=3)
+    _run(["iw", "dev", iface, "set", "power_save", "off"], timeout=3)
+    _run(["udevadm", "settle", "--timeout=5"], timeout=6)
+
+
+def _scan_wifi_with_iw(iface: str, timeout: int) -> tuple[set[str], int, set[str], str]:
+    evidence_parts: list[str] = []
+    network_ids: set[str] = set()
+    best_ssids: set[str] = set()
+    best_count = 0
+    for label, argv in (
+        ("iw active", ["iw", "dev", iface, "scan"]),
+        ("iw passive", ["iw", "dev", iface, "scan", "passive"]),
+        ("iwlist", ["iwlist", iface, "scanning"]),
+    ):
+        raw = _run(argv, timeout=timeout)
+        ssids, count = _parse_wifi_scan(raw)
+        ids = set(re.findall(
+            r"^\s*(?:BSS\s+|Cell\s+\d+\s+-\s+Address:\s*)([0-9A-Fa-f:]{17})",
+            raw or "",
+            re.M,
+        ))
+        network_ids.update(ids)
+        best_ssids.update(ssids)
+        best_count = max(best_count, count, len(ids))
+        evidence_parts.append(f"{label}={max(count, len(ids), len(ssids))}")
+        if best_count:
+            break
+    return best_ssids, best_count, network_ids, ", ".join(evidence_parts)
 
 
 def ensure_wireless_ready(timeout_sec: float = 10.0) -> list[str]:
@@ -1417,33 +1483,40 @@ def scan_wifi_networks(timeout: int = 10, attempts: int = 3) -> dict:
     network_ids: set[str] = set()
     observed_network_count = 0
     scan_attempts = 0
+    scan_evidence: list[str] = []
 
     _run(["rfkill", "unblock", "wifi"], timeout=3)
     _run(["udevadm", "settle", "--timeout=5"], timeout=6)
     for iface in interfaces:
-        _run(["ip", "link", "set", iface, "up"], timeout=3)
+        _prepare_wifi_scan_interface(iface)
         for attempt in range(max(1, attempts)):
             scan_attempts += 1
-            raw = _run(["iw", "dev", iface, "scan"], timeout=timeout)
-            if not raw:
-                raw = _run(["iwlist", iface, "scanning"], timeout=timeout)
-            ssids, network_count = _parse_wifi_scan(raw)
+            ssids, network_count, ids, iw_evidence = _scan_wifi_with_iw(iface, timeout)
+            network_ids.update(ids)
             if not network_count:
                 nmcli_raw = _nmcli_scan_wifi(iface, timeout)
                 nmcli_ssids, nmcli_count = _parse_nmcli_wifi_scan(nmcli_raw)
                 ssids.update(nmcli_ssids)
                 network_count = max(network_count, nmcli_count)
+                scan_evidence.append(
+                    f"{iface} attempt {attempt + 1}: {iw_evidence}; nmcli-iface={nmcli_count}"
+                )
+            else:
+                scan_evidence.append(f"{iface} attempt {attempt + 1}: {iw_evidence}")
             observed_network_count = max(observed_network_count, network_count)
             visible_ssids.update(ssids)
-            network_ids.update(re.findall(
-                r"^\s*(?:BSS\s+|Cell\s+\d+\s+-\s+Address:\s*)([0-9A-Fa-f:]{17})",
-                raw or "",
-                re.M,
-            ))
             if network_count:
                 break
             if attempt + 1 < max(1, attempts):
+                _prepare_wifi_scan_interface(iface)
                 time.sleep(1)
+
+    if not observed_network_count:
+        nmcli_raw = _nmcli_scan_wifi(None, timeout)
+        nmcli_ssids, nmcli_count = _parse_nmcli_wifi_scan(nmcli_raw)
+        visible_ssids.update(nmcli_ssids)
+        observed_network_count = max(observed_network_count, nmcli_count)
+        scan_evidence.append(f"nmcli-global={nmcli_count}")
 
     network_count = max(observed_network_count, len(network_ids), len(visible_ssids))
     return {
@@ -1452,6 +1525,7 @@ def scan_wifi_networks(timeout: int = 10, attempts: int = 3) -> dict:
         "network_count": network_count,
         "hidden_count": max(0, network_count - len(visible_ssids)),
         "attempts": scan_attempts,
+        "scan_evidence": "; ".join(scan_evidence[-8:]),
     }
 
 
@@ -1507,6 +1581,7 @@ def run_wireless_check() -> dict:
         "evidence": (
             f"Wi-Fi interfaces: {', '.join(wifi['interfaces']) if wifi['interfaces'] else 'none'}; "
             f"networks: {network_summary}; attempts: {wifi['attempts']}; "
+            f"scan: {wifi.get('scan_evidence') or 'none'}; "
             f"Bluetooth: {bt_evidence}"
         ),
     }

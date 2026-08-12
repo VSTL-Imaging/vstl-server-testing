@@ -44,6 +44,27 @@ phy#0
     assert qc.wifi_interfaces() == ["wlan0"]
 
 
+def test_wifi_interface_detection_falls_back_to_networkmanager(monkeypatch):
+    original_listdir = os.listdir
+
+    def fake_listdir(path):
+        if path == "/sys/class/net":
+            return []
+        return original_listdir(path)
+
+    def fake_run(argv, timeout=5):
+        if argv[:2] == ["iw", "dev"]:
+            return ""
+        if argv[:3] == ["nmcli", "--terse", "--fields"]:
+            return "eth0:ethernet\nwlan0:wifi\np2p-dev-wlan0:wifi\n"
+        return ""
+
+    monkeypatch.setattr(os, "listdir", fake_listdir)
+    monkeypatch.setattr(qc, "_run", fake_run)
+
+    assert qc.wifi_interfaces() == ["wlan0"]
+
+
 def test_wifi_scan_retries_and_counts_hidden_bss(monkeypatch):
     calls = []
     scans = iter([
@@ -95,6 +116,47 @@ def test_wifi_scan_uses_nmcli_fallback_when_iw_finds_nothing(monkeypatch):
     assert any(call[:3] == ["nmcli", "--terse", "--escape"] for call in calls)
 
 
+def test_wifi_scan_uses_global_nmcli_fallback_when_interface_scan_finds_nothing(monkeypatch):
+    calls = []
+
+    def fake_run(argv, timeout=5):
+        calls.append(argv)
+        if argv[:2] == ["sh", "-c"]:
+            return "/usr/bin/nmcli"
+        if argv[:3] == ["nmcli", "--terse", "--escape"] and "ifname" not in argv:
+            return "Layer2Bench:AA\\:BB\\:CC\\:DD\\:EE\\:FF:76\n"
+        return ""
+
+    monkeypatch.setattr(qc, "ensure_wireless_ready", lambda: ["wlan0"])
+    monkeypatch.setattr(qc, "_run", fake_run)
+    monkeypatch.setattr(qc.time, "sleep", lambda seconds: None)
+
+    result = qc.scan_wifi_networks(attempts=1)
+
+    assert result["network_count"] == 1
+    assert result["ssids"] == ["Layer2Bench"]
+    assert "nmcli-global=1" in result["scan_evidence"]
+    assert any(call[:3] == ["nmcli", "--terse", "--escape"] and "ifname" not in call for call in calls)
+
+
+def test_wifi_scan_prepare_does_not_bounce_default_route_interface(monkeypatch):
+    calls = []
+
+    def fake_run(argv, timeout=5):
+        calls.append(argv)
+        if argv[:4] == ["ip", "route", "show", "default"]:
+            return "default via 192.168.1.1 dev wlan0 proto dhcp\n"
+        return ""
+
+    monkeypatch.setattr(qc, "_run", fake_run)
+    monkeypatch.setattr(qc.time, "sleep", lambda seconds: None)
+
+    qc._prepare_wifi_scan_interface("wlan0")
+
+    assert ["ip", "link", "set", "wlan0", "down"] not in calls
+    assert ["ip", "link", "set", "wlan0", "up"] in calls
+
+
 def test_wireless_check_passes_when_only_hidden_network_is_seen(monkeypatch):
     monkeypatch.setattr(qc, "scan_wifi_networks", lambda: {
         "interfaces": ["wlan0"],
@@ -102,6 +164,7 @@ def test_wireless_check_passes_when_only_hidden_network_is_seen(monkeypatch):
         "network_count": 1,
         "hidden_count": 1,
         "attempts": 2,
+        "scan_evidence": "iw active=1",
     })
     monkeypatch.setattr(qc, "bluetooth_status", lambda: (True, "hci0"))
     result = qc.run_wireless_check()

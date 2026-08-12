@@ -61,7 +61,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v6"
+RESTORE_CLIENT_BUILD = "restore-track-v7"
 
 
 def _now_iso() -> str:
@@ -643,17 +643,39 @@ def _pick_windows_gpt_parts(parts: list[dict]) -> tuple[dict, list[dict], dict, 
     return os_part, efi_parts + msr_parts, rec_part, "windows gpt layout ok"
 
 
-def _target_disk_sectors(device: str) -> tuple[int | None, str]:
+def _target_disk_size_bytes(device: str) -> tuple[int | None, str]:
     rc, out, err = _run(["blockdev", "--getsz", device], timeout=10)
     if rc != 0:
         return None, f"blockdev --getsz failed rc={rc} {err[:200]}"
     try:
-        sectors = int(out.strip())
+        sectors_512 = int(out.strip())
     except ValueError:
         return None, f"blockdev --getsz parse failed: {out[:120]}"
-    if sectors <= 0:
-        return None, f"blockdev --getsz returned unusable size: {sectors}"
-    return sectors, f"target_sectors={sectors}"
+    if sectors_512 <= 0:
+        return None, f"blockdev --getsz returned unusable size: {sectors_512}"
+    return sectors_512 * 512, f"target_sectors_512={sectors_512}"
+
+
+def _ceil_div(numerator: int, denominator: int) -> int:
+    if denominator <= 0:
+        return 0
+    return -(-numerator // denominator)
+
+
+def _source_sector_to_target_sector(
+    source_sector: int,
+    source_sector_size: int,
+    target_sector_size: int,
+) -> int:
+    return _ceil_div(source_sector * source_sector_size, target_sector_size)
+
+
+def _source_sector_count_to_target_count(
+    source_sector_count: int,
+    source_sector_size: int,
+    target_sector_size: int,
+) -> int:
+    return _ceil_div(source_sector_count * source_sector_size, target_sector_size)
 
 
 def _prepare_target_windows_gpt_from_image(
@@ -690,22 +712,31 @@ def _prepare_target_windows_gpt_from_image(
     if not os_part:
         return True, False, "\n".join(evidence)
 
-    target_sectors, size_ev = _target_disk_sectors(device)
+    target_size_bytes, size_ev = _target_disk_size_bytes(device)
     evidence.append(size_ev)
-    if target_sectors is None:
+    if target_size_bytes is None:
         return False, False, "\n".join(evidence)
     source_sector_size = int(table.get("sector-size") or 512)
     target_sector_size = _logical_sector_size(device)
     evidence.append(f"sector_size image={source_sector_size} target={target_sector_size}")
-    if source_sector_size != target_sector_size:
-        evidence.append("precreate failed: source and target sector sizes differ")
+    if source_sector_size <= 0 or target_sector_size <= 0:
+        evidence.append("precreate failed: invalid source or target sector size")
         return False, False, "\n".join(evidence)
+    target_logical_sectors = target_size_bytes // target_sector_size
+    if target_logical_sectors <= 68:
+        evidence.append("precreate failed: target disk is too small for GPT")
+        return False, False, "\n".join(evidence)
+    evidence.append(f"target_logical_sectors={target_logical_sectors}")
 
-    target_last_lba = target_sectors - 34
-    rec_size = int(rec_part.get("size") or 0)
+    target_last_lba = target_logical_sectors - 34
+    rec_size = _source_sector_count_to_target_count(
+        int(rec_part.get("size") or 0), source_sector_size, target_sector_size,
+    )
     rec_start = _align_down(target_last_lba - rec_size + 1)
     rec_end = rec_start + rec_size - 1
-    os_start = int(os_part.get("start") or 0)
+    os_start = _source_sector_to_target_sector(
+        int(os_part.get("start") or 0), source_sector_size, target_sector_size,
+    )
     os_end = rec_start - 1
     if rec_size <= 0 or rec_end > target_last_lba or os_end <= os_start:
         evidence.append(
@@ -719,6 +750,12 @@ def _prepare_target_windows_gpt_from_image(
     for source in parts:
         number = int(source.get("number") or 0)
         target = dict(source)
+        target["start"] = _source_sector_to_target_sector(
+            int(source.get("start") or 0), source_sector_size, target_sector_size,
+        )
+        target["size"] = _source_sector_count_to_target_count(
+            int(source.get("size") or 0), source_sector_size, target_sector_size,
+        )
         if number == os_number:
             target["start"] = os_start
             target["size"] = os_end - os_start + 1
@@ -739,7 +776,7 @@ def _prepare_target_windows_gpt_from_image(
     if rc != 0:
         return False, False, "\n".join(evidence)
 
-    cmd = ["sgdisk", "--clear"]
+    cmd = ["sgdisk", "--clear", "--set-alignment=1"]
     if table.get("label-id"):
         cmd.append(f"--disk-guid={table['label-id']}")
     for part in sorted(target_parts, key=lambda item: int(item.get("number") or 0)):

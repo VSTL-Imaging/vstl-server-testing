@@ -58,7 +58,7 @@ from typing import Callable, Optional
 
 
 _EVIDENCE_CAP = 6000
-SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v8"
+SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v9"
 _CONSOLE_KEEPALIVE_LOCK = threading.Lock()
 _CONSOLE_KEEPALIVE_STARTED = False
 _NVME_CLEAR_ASSIST_METHODS = (
@@ -148,6 +148,9 @@ if command -v setterm >/dev/null 2>&1; then
     setterm --blank poke <"$tty" >"$tty" 2>/dev/null || true
   done
 fi
+for fb_blank in /sys/class/graphics/fb*/blank; do
+  [ -w "$fb_blank" ] && echo 0 > "$fb_blank" || true
+done
 for power in /sys/class/backlight/*/bl_power; do
   [ -w "$power" ] && echo 0 > "$power" || true
 done
@@ -160,7 +163,7 @@ echo "operator console keepalive applied"
     return f"$ operator-console-keepalive\nrc={rc}\n{out}\n{err}".strip()
 
 
-def _console_keepalive_worker(interval_sec: int = 15) -> None:
+def _console_keepalive_worker(interval_sec: int = 5) -> None:
     while True:
         time.sleep(interval_sec)
         _keep_operator_console_awake()
@@ -1028,9 +1031,56 @@ def _erase_failure_reason(evidence: str) -> str:
     return "See secure erase evidence log for the controller-level failure detail."
 
 
+def _run_with_erase_heartbeat(
+    cmd: list[str],
+    timeout: int,
+    progress: Optional[Callable[[dict], None]] = None,
+    method: str = "",
+    phase: str = "running erase command",
+    heartbeat_sec: float = 3.0,
+) -> tuple[int, str, str]:
+    """Run a long command while keeping the operator console visibly alive."""
+    started = time.monotonic()
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        return 127, "", f"{cmd[0]}: not found"
+    except OSError as e:
+        return 1, "", f"OSError: {e}"
+
+    last_heartbeat = 0.0
+    while True:
+        rc = proc.poll()
+        now = time.monotonic()
+        if rc is not None:
+            out, err = proc.communicate()
+            return rc, out or "", err or ""
+        if now - started > timeout:
+            proc.kill()
+            out, err = proc.communicate()
+            return 124, out or "", (err or "") + f"\ntimeout after {timeout}s"
+        if now - last_heartbeat >= heartbeat_sec:
+            elapsed = int(now - started)
+            _keep_operator_console_awake()
+            if progress:
+                progress({
+                    "elapsed_sec": elapsed,
+                    "phase": phase,
+                    "method": method,
+                    "percent": None,
+                })
+            last_heartbeat = now
+        time.sleep(0.5)
+
+
 def _hdparm_security_erase(device: str,
-                            progress: Optional[Callable[[dict], None]] = None,
-                            timeout: int = 4 * 3600) -> tuple[bool, str, str]:
+                           progress: Optional[Callable[[dict], None]] = None,
+                           timeout: int = 4 * 3600) -> tuple[bool, str, str]:
     """ATA Security-Erase-Enhanced via hdparm.
 
     Sets a transient password (``vstl``), then issues the enhanced erase.
@@ -1120,17 +1170,23 @@ def _hdparm_security_erase(device: str,
     if progress:
         progress({"elapsed_sec": 0, "phase": "running"})
     _keep_operator_console_awake()
-    rc2, out2, err2 = _run(
+    rc2, out2, err2 = _run_with_erase_heartbeat(
         ["hdparm", "--user-master", "u", "--security-erase-enhanced", "vstl", device],
         timeout=timeout,
+        progress=progress,
+        method="ATA_SECURITY_ERASE_ENHANCED",
+        phase="running ATA Security Erase Enhanced",
     )
     erase_ev = f"$ hdparm --security-erase-enhanced vstl {device}\nrc={rc2}\n{out2}\n{err2}"
     method = "ATA_SECURITY_ERASE_ENHANCED"
     if rc2 != 0:
         _keep_operator_console_awake()
-        rc3, out3, err3 = _run(
+        rc3, out3, err3 = _run_with_erase_heartbeat(
             ["hdparm", "--user-master", "u", "--security-erase", "vstl", device],
             timeout=timeout,
+            progress=progress,
+            method="ATA_SECURITY_ERASE",
+            phase="running ATA Security Erase",
         )
         erase_ev += f"\n$ hdparm --security-erase vstl {device}\nrc={rc3}\n{out3}\n{err3}"
         method = "ATA_SECURITY_ERASE"

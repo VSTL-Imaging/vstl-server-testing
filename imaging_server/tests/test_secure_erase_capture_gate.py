@@ -342,10 +342,13 @@ def test_secure_erase_blocks_when_battery_has_no_external_power():
 
 
 def test_secure_erase_keeps_operator_console_awake_during_long_runs():
-    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v8"' in ERASE
+    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v9"' in ERASE
     assert "def _ensure_erase_console_keepalive" in ERASE
     assert "setterm --blank 0 --powerdown 0 --powersave off" in ERASE
     assert "/sys/module/kernel/parameters/consoleblank" in ERASE
+    assert "/sys/class/graphics/fb*/blank" in ERASE
+    assert "def _run_with_erase_heartbeat" in ERASE
+    assert "running ATA Security Erase Enhanced" in ERASE
     assert "[operator console keepalive]" in ERASE
 
 
@@ -954,6 +957,8 @@ def test_nvme_sanitize_unparseable_status_fails_quickly():
 def test_clear_class_methods_are_certificate_mapped_only_for_model_exception():
     assert '"NVMe_SANITIZE_OVERWRITE": "NIST SP 800-88 Purge"' in TUI
     assert "SECURE_ERASE_CLIENT_BUILD" in TUI
+    assert "vstl-secure-erase-worker" in TUI
+    assert "se._keep_operator_console_awake()" in TUI
     assert "_CLEAR_WIPE_METHOD_STANDARDS = {" in TUI
     assert '"NVMe_FORMAT_USER_DATA": "NIST SP 800-88 Clear"' in TUI
     assert '"NVMe_SECURE_DISCARD_CLEAR": "NIST SP 800-88 Clear"' in TUI
@@ -1111,15 +1116,22 @@ def test_ata_security_erase_continues_when_drive_is_not_frozen():
     calls = [
         (0, identity, ""),
         (0, "security_password: set", ""),
-        (0, "security_erase_enhanced: completed", ""),
     ]
-    with mock.patch.object(erase, "_run", side_effect=calls) as run:
+    with (
+        mock.patch.object(erase, "_run", side_effect=calls) as run,
+        mock.patch.object(
+            erase,
+            "_run_with_erase_heartbeat",
+            return_value=(0, "security_erase_enhanced: completed", ""),
+        ) as heartbeat,
+    ):
         ok, method, evidence = erase._hdparm_security_erase("/dev/sda")
 
     assert ok
     assert method == "ATA_SECURITY_ERASE_ENHANCED"
     assert "completed" in evidence
-    assert run.call_count == 3
+    assert run.call_count == 2
+    heartbeat.assert_called_once()
 
 
 def test_ata_security_erase_retries_after_suspend_resume_unfreeze():
@@ -1130,16 +1142,23 @@ def test_ata_security_erase_retries_after_suspend_resume_unfreeze():
         (0, "resume completed", ""),
         (0, thawed, ""),
         (0, "security_password: set", ""),
-        (0, "security_erase_enhanced: completed", ""),
     ]
-    with mock.patch.object(erase, "_run", side_effect=calls) as run:
+    with (
+        mock.patch.object(erase, "_run", side_effect=calls) as run,
+        mock.patch.object(
+            erase,
+            "_run_with_erase_heartbeat",
+            return_value=(0, "security_erase_enhanced: completed", ""),
+        ) as heartbeat,
+    ):
         ok, method, evidence = erase._hdparm_security_erase("/dev/sda")
 
     assert ok
     assert method == "ATA_SECURITY_ERASE_ENHANCED"
     assert "resume completed" in evidence
     assert "after suspend/resume" in evidence
-    assert run.call_count == 5
+    assert run.call_count == 4
+    heartbeat.assert_called_once()
 
 
 def test_ata_security_erase_unfreezes_legacy_dell_after_sanitize_fallback():
@@ -1149,10 +1168,14 @@ def test_ata_security_erase_unfreezes_legacy_dell_after_sanitize_fallback():
         (0, frozen, ""),
         (0, thawed, ""),
         (0, "security_password: set", ""),
-        (0, "security_erase_enhanced: completed", ""),
     ]
     with (
         mock.patch.object(erase, "_run", side_effect=calls),
+        mock.patch.object(
+            erase,
+            "_run_with_erase_heartbeat",
+            return_value=(0, "security_erase_enhanced: completed", ""),
+        ) as heartbeat,
         mock.patch.object(erase, "_ata_try_unfreeze", return_value=(True, "resume completed")) as unfreeze,
         mock.patch.object(
             erase,
@@ -1167,6 +1190,7 @@ def test_ata_security_erase_unfreezes_legacy_dell_after_sanitize_fallback():
     assert "Dell Inc. | Latitude 5490" in evidence
     assert "resume completed" in evidence
     unfreeze.assert_called_once()
+    heartbeat.assert_called_once()
 
 
 def test_ata_security_erase_clears_stale_enabled_state_before_arming():
@@ -1177,9 +1201,15 @@ def test_ata_security_erase_clears_stale_enabled_state_before_arming():
         (0, "security_disabled", ""),
         (0, cleared, ""),
         (0, "security_password: set", ""),
-        (0, "security_erase_enhanced: completed", ""),
     ]
-    with mock.patch.object(erase, "_run", side_effect=calls) as run:
+    with (
+        mock.patch.object(erase, "_run", side_effect=calls) as run,
+        mock.patch.object(
+            erase,
+            "_run_with_erase_heartbeat",
+            return_value=(0, "security_erase_enhanced: completed", ""),
+        ) as heartbeat,
+    ):
         ok, method, evidence = erase._hdparm_security_erase("/dev/sda")
 
     assert ok
@@ -1188,6 +1218,7 @@ def test_ata_security_erase_clears_stale_enabled_state_before_arming():
     commands = [call.args[0] for call in run.call_args_list]
     assert ["hdparm", "--user-master", "u", "--security-disable", "vstl", "/dev/sda"] in commands
     assert ["hdparm", "--user-master", "u", "--security-set-pass", "vstl", "/dev/sda"] in commands
+    heartbeat.assert_called_once()
 
 
 def test_ata_security_erase_fails_cleanly_when_drive_is_prelocked():

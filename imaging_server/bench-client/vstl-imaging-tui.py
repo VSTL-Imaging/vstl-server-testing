@@ -38,6 +38,7 @@ import shutil
 import ssl
 import subprocess
 import sys
+import threading
 import textwrap
 import time
 import traceback
@@ -7567,7 +7568,7 @@ def _draw_erase_progress(stdscr, drive: dict,
     stdscr.refresh()
 
 
-def screen_run_erase(stdscr, drive: dict) -> dict:
+def _screen_run_erase_legacy_blocking(stdscr, drive: dict) -> dict:
     """Execute the secure-erase run with a live progress redraw via
     the vstl_secure_erase.run_secure_erase progress_callback hook."""
     state = {"method": "auto-detect…", "phase": "starting…",
@@ -7605,6 +7606,103 @@ def screen_run_erase(stdscr, drive: dict) -> dict:
             "verification_method": "skipped",
             "evidence": traceback.format_exc()[-4000:],
             "error_message": f"secure erase program error: {exc}",
+        }
+    state["method"] = result.get("method") or state["method"]
+    state["phase"] = "completed" if result.get("ok") else "failed"
+    _draw_erase_progress(stdscr, drive, state)
+    time.sleep(1.0)
+    return result
+
+
+def screen_run_erase(stdscr, drive: dict) -> dict:
+    """Run secure erase in a worker while the main TUI keeps repainting."""
+    state = {"method": "auto-detect...", "phase": "starting...",
+             "elapsed_sec": 0, "percent": None}
+    state_lock = threading.Lock()
+    result_holder: dict[str, dict] = {}
+    error_holder: dict[str, object] = {}
+
+    started_at = datetime.now(timezone.utc).isoformat()
+    started_ts = time.monotonic()
+
+    def _progress(ev: dict) -> None:
+        with state_lock:
+            state.update({
+                "method":      ev.get("method", state["method"]),
+                "phase":       ev.get("phase", state["phase"]),
+                "elapsed_sec": ev.get("elapsed_sec", state["elapsed_sec"]),
+                "percent":     ev.get("percent", state["percent"]),
+            })
+
+    def _run_worker() -> None:
+        try:
+            result_holder["result"] = se.run_secure_erase(
+                drive=drive,
+                progress_callback=_progress,
+            )
+        except Exception as exc:
+            error_holder["exc"] = exc
+            error_holder["traceback"] = traceback.format_exc()
+
+    _draw_erase_progress(stdscr, drive, state)
+    worker = threading.Thread(
+        target=_run_worker,
+        name="vstl-secure-erase-worker",
+        daemon=True,
+    )
+    worker.start()
+    while worker.is_alive():
+        with state_lock:
+            state["elapsed_sec"] = max(
+                int(time.monotonic() - started_ts),
+                int(state.get("elapsed_sec") or 0),
+            )
+            draw_state = dict(state)
+        try:
+            if hasattr(se, "_keep_operator_console_awake"):
+                se._keep_operator_console_awake()
+        except Exception:
+            pass
+        _draw_erase_progress(stdscr, drive, draw_state)
+        time.sleep(1.0)
+    worker.join(timeout=1.0)
+
+    if error_holder:
+        exc = error_holder.get("exc")
+        result = {
+            "ok": False,
+            "method": state.get("method") or "",
+            "standard": "",
+            "passes": 0,
+            "started_at": started_at,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_sec": int(time.monotonic() - started_ts),
+            "device": drive.get("device", ""),
+            "device_type": drive.get("device_type", "UNKNOWN"),
+            "device_model": drive.get("device_model", ""),
+            "device_size_gb": drive.get("device_size_gb", 0),
+            "verified": False,
+            "verification_method": "skipped",
+            "evidence": str(error_holder.get("traceback") or "")[-4000:],
+            "error_message": f"secure erase program error: {exc}",
+        }
+    else:
+        result = result_holder.get("result") or {
+            "ok": False,
+            "method": state.get("method") or "",
+            "standard": "",
+            "passes": 0,
+            "started_at": started_at,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_sec": int(time.monotonic() - started_ts),
+            "device": drive.get("device", ""),
+            "device_type": drive.get("device_type", "UNKNOWN"),
+            "device_model": drive.get("device_model", ""),
+            "device_size_gb": drive.get("device_size_gb", 0),
+            "verified": False,
+            "verification_method": "skipped",
+            "evidence": "",
+            "error_message": "secure erase worker exited without a result",
         }
     state["method"] = result.get("method") or state["method"]
     state["phase"] = "completed" if result.get("ok") else "failed"

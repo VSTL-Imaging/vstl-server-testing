@@ -28,6 +28,14 @@ class BenchEntryCleanTuiStartTests(unittest.TestCase):
         self.assertIn("stty sane", ENTRY)
         self.assertIn("printf '\\033c\\033[?25h\\033[H\\033[2J\\033[3J'", ENTRY)
 
+    def test_entry_disables_console_blanking_before_curses(self):
+        self.assertIn("keep_operator_console_awake", ENTRY)
+        self.assertIn("/sys/module/kernel/parameters/consoleblank", ENTRY)
+        self.assertIn("setterm --blank 0 --powerdown 0 --powersave off", ENTRY)
+        keepalive_pos = ENTRY.index("keep_operator_console_awake")
+        tui_pos = ENTRY.index('python3 "$TUI_PATH"')
+        self.assertLess(keepalive_pos, tui_pos)
+
     def test_entry_applies_large_console_font(self):
         self.assertIn("apply_console_font", ENTRY)
         self.assertIn("VSTL_CONSOLE_FONT", ENTRY)

@@ -51,13 +51,16 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
 
 _EVIDENCE_CAP = 6000
-SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v5"
+SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v6"
+_CONSOLE_KEEPALIVE_LOCK = threading.Lock()
+_CONSOLE_KEEPALIVE_STARTED = False
 _NVME_CLEAR_ASSIST_METHODS = (
     "NVMe_FORMAT_USER_DATA",
     "NVMe_SECURE_DISCARD_CLEAR",
@@ -121,6 +124,70 @@ def _run(cmd: list[str], timeout: int = 60) -> tuple[int, str, str]:
         return 124, "", f"timeout after {e.timeout}s"
     except OSError as e:
         return 1, "", f"OSError: {e}"
+
+
+def _keep_operator_console_awake() -> str:
+    """Disable Linux console blanking and wake the local display.
+
+    Some laptops keep running after a native NVMe erase command while the
+    panel/console goes black. Keep this best-effort and non-fatal: the wipe
+    policy must not depend on video hardware cooperating.
+    """
+    if os.environ.get("VSTL_DISABLE_CONSOLE_KEEPALIVE") == "1":
+        return "console keepalive disabled by VSTL_DISABLE_CONSOLE_KEEPALIVE"
+    if os.name != "posix":
+        return "console keepalive skipped on non-posix host"
+
+    script = r"""
+set +e
+echo 0 > /sys/module/kernel/parameters/consoleblank 2>/dev/null || true
+if command -v setterm >/dev/null 2>&1; then
+  for tty in /dev/tty0 /dev/tty1 /dev/console; do
+    [ -w "$tty" ] || continue
+    setterm --blank 0 --powerdown 0 --powersave off <"$tty" >"$tty" 2>/dev/null || true
+    setterm --blank poke <"$tty" >"$tty" 2>/dev/null || true
+  done
+fi
+for power in /sys/class/backlight/*/bl_power; do
+  [ -w "$power" ] && echo 0 > "$power" || true
+done
+for dpms in /sys/class/drm/*/dpms; do
+  [ -w "$dpms" ] && echo On > "$dpms" || true
+done
+echo "operator console keepalive applied"
+"""
+    rc, out, err = _run(["sh", "-c", script], timeout=5)
+    return f"$ operator-console-keepalive\nrc={rc}\n{out}\n{err}".strip()
+
+
+def _console_keepalive_worker(interval_sec: int = 15) -> None:
+    while True:
+        time.sleep(interval_sec)
+        _keep_operator_console_awake()
+
+
+def _ensure_erase_console_keepalive() -> str:
+    """Start one background display keepalive for long secure erase runs."""
+    global _CONSOLE_KEEPALIVE_STARTED
+
+    evidence = _keep_operator_console_awake()
+    if (
+        os.environ.get("VSTL_DISABLE_CONSOLE_KEEPALIVE") == "1"
+        or os.name != "posix"
+    ):
+        return evidence
+
+    with _CONSOLE_KEEPALIVE_LOCK:
+        if _CONSOLE_KEEPALIVE_STARTED:
+            return evidence + "\nbackground keepalive already running"
+        thread = threading.Thread(
+            target=_console_keepalive_worker,
+            name="vstl-secure-erase-console-keepalive",
+            daemon=True,
+        )
+        thread.start()
+        _CONSOLE_KEEPALIVE_STARTED = True
+    return evidence + "\nbackground keepalive started"
 
 
 def _read_sysfs_text(path: str) -> str:
@@ -500,6 +567,7 @@ def _nvme_sanitize(device: str, action: int,
     Returns (success, method_label, evidence).
     """
     label = _NVME_SANITIZE_ACTION_LABELS.get(action, f"NVMe_SANITIZE_ACTION_{action}")
+    _keep_operator_console_awake()
     if progress:
         progress({
             "elapsed_sec": 0,
@@ -529,6 +597,7 @@ def _nvme_sanitize(device: str, action: int,
     last_log = ""
     unknown_statuses = 0
     while True:
+        _keep_operator_console_awake()
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()
         if elapsed > timeout:
             return False, label, issue_ev + f"\n[timeout after {timeout}s]\n{last_log[-1000:]}"
@@ -619,6 +688,7 @@ def _nvme_format(device: str, secure_erase_setting: int) -> tuple[bool, str, str
 
     evidence_blocks: list[str] = []
     for cmd in commands:
+        _keep_operator_console_awake()
         rc, out, err = _run(cmd, timeout=900)
         evidence_blocks.append(f"$ {' '.join(cmd)}\nrc={rc}\n{out}\n{err}")
         if rc == 0:
@@ -781,6 +851,7 @@ def _hdparm_sanitize_erase(
     evidence_blocks: list[str] = [evidence]
     selected_method = ""
     for option, method in methods:
+        _keep_operator_console_awake()
         cmd = ["hdparm", "--yes-i-know-what-i-am-doing", option, device]
         rc_issue, out_issue, err_issue = _run(cmd, timeout=30)
         evidence_blocks.append(
@@ -795,6 +866,7 @@ def _hdparm_sanitize_erase(
     started = time.monotonic()
     unknown_statuses = 0
     while True:
+        _keep_operator_console_awake()
         elapsed = int(time.monotonic() - started)
         if elapsed > timeout:
             return (
@@ -1026,6 +1098,7 @@ def _hdparm_security_erase(device: str,
     #    support the standard erase — try enhanced first, then plain.
     if progress:
         progress({"elapsed_sec": 0, "phase": "running"})
+    _keep_operator_console_awake()
     rc2, out2, err2 = _run(
         ["hdparm", "--user-master", "u", "--security-erase-enhanced", "vstl", device],
         timeout=timeout,
@@ -1033,6 +1106,7 @@ def _hdparm_security_erase(device: str,
     erase_ev = f"$ hdparm --security-erase-enhanced vstl {device}\nrc={rc2}\n{out2}\n{err2}"
     method = "ATA_SECURITY_ERASE_ENHANCED"
     if rc2 != 0:
+        _keep_operator_console_awake()
         rc3, out3, err3 = _run(
             ["hdparm", "--user-master", "u", "--security-erase", "vstl", device],
             timeout=timeout,
@@ -1046,6 +1120,7 @@ def _hdparm_security_erase(device: str,
 
 def _blkdiscard(device: str) -> tuple[bool, str, str]:
     """Maintenance-only TRIM/UNMAP Clear assist; never certifies the erase."""
+    _keep_operator_console_awake()
     rc, out, err = _run(["blkdiscard", "-f", device], timeout=900)
     ev = f"$ blkdiscard -f {device}\nrc={rc}\n{out}\n{err}"
     return rc == 0, "BLKDISCARD", ev
@@ -1059,6 +1134,7 @@ def _nvme_secure_discard_clear(device: str) -> tuple[bool, str, str]:
     ]
     evidence_blocks: list[str] = []
     for cmd in commands:
+        _keep_operator_console_awake()
         rc, out, err = _run(cmd, timeout=900)
         evidence_blocks.append(f"$ {' '.join(cmd)}\nrc={rc}\n{out}\n{err}")
         if rc == 0:
@@ -1082,6 +1158,7 @@ def _software_zero_clear(
     label = "NVMe_SOFTWARE_ZERO_CLEAR"
     started = time.monotonic()
     try:
+        _keep_operator_console_awake()
         total = int(size_bytes or 0)
     except (TypeError, ValueError):
         total = 0
@@ -1132,6 +1209,7 @@ def _software_zero_clear(
                         now = time.monotonic()
                 percent = int((written * 100) / total)
                 if progress and (percent != last_progress or now - last_update >= 2):
+                    _keep_operator_console_awake()
                     progress({
                         "elapsed_sec": int(now - started),
                         "phase": (
@@ -1368,6 +1446,7 @@ def run_secure_erase(
     clear_only_exception = False
     clear_only_exception_reason = ""
     clear_exception_reason = _clear_only_exception_reason()
+    evidence_blocks.append("[operator console keepalive]\n" + _ensure_erase_console_keepalive())
     power_ok, power_ev, power_error = _erase_power_guard()
     evidence_blocks.append("[power stability]\n" + power_ev)
     if not power_ok:

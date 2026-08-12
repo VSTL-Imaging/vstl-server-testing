@@ -107,11 +107,33 @@ cleanup_single_instance_lock() {
     fi
 }
 
+keep_operator_console_awake() {
+    # Long secure erase commands can leave the unit running while the Linux
+    # console blanks the panel. Keep the operator VT visible for local/KVM use.
+    echo 0 > /sys/module/kernel/parameters/consoleblank 2>/dev/null || true
+    if command -v setterm >/dev/null 2>&1; then
+        local tty
+        for tty in "$TUI_TTY" /dev/tty0 /dev/console; do
+            [[ -c "$tty" ]] || continue
+            setterm --blank 0 --powerdown 0 --powersave off <"$tty" >"$tty" 2>/dev/null || true
+            setterm --blank poke <"$tty" >"$tty" 2>/dev/null || true
+        done
+    fi
+    local power dpms
+    for power in /sys/class/backlight/*/bl_power; do
+        [[ -w "$power" ]] && echo 0 > "$power" || true
+    done
+    for dpms in /sys/class/drm/*/dpms; do
+        [[ -w "$dpms" ]] && echo On > "$dpms" || true
+    done
+}
+
 if ! take_single_instance_lock; then
     wait_for_existing_instance
     exit 0
 fi
 trap cleanup_single_instance_lock EXIT
+keep_operator_console_awake
 
 # ---------- 1. Config ----------------------------------------------------------
 if [[ -f "$CONFIG_FILE" ]]; then
@@ -167,6 +189,7 @@ activate_tui_tty() {
     fi
 
     stty sane <"$TUI_TTY" >"$TUI_TTY" 2>/dev/null || true
+    keep_operator_console_awake
     apply_console_font
     clear_tui_tty
 
@@ -179,6 +202,7 @@ activate_tui_tty() {
     fi
 
     stty sane <"$TUI_TTY" >"$TUI_TTY" 2>/dev/null || true
+    keep_operator_console_awake
     apply_console_font
     clear_tui_tty
     return 0

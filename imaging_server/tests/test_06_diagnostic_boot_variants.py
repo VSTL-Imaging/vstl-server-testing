@@ -140,6 +140,12 @@ def test_kernel_panic_auto_reboots_for_kvm_recovery():
     assert "quiet loglevel=3 panic=15 noswap" in SCRIPT
 
 
+def test_kernel_cmdline_disables_console_blanking():
+    """Long erase operations must not let the Linux console blank the display."""
+    assert "consoleblank=0" in SCRIPT
+    assert "panic=15 noswap consoleblank=0 nomodeset" in SCRIPT
+
+
 def test_cpio_variant_is_stripped_when_merge_did_not_run():
     """If MERGE mode was skipped (SINGLE_CPIO/GZIP/XZ/ZSTD/SPLIT), the cpio
     variant must be deleted to prevent the operator from chaining to a 404."""

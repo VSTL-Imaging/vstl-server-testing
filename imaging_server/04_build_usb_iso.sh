@@ -135,7 +135,7 @@ mksquashfs "$WORK_DIR/rootfs" "$WORK_DIR/filesystem.squashfs" \
 # Replace Clonezilla's visible boot menus with one immediate VSTL entry.
 # UEFI loads /boot/grub/grub.cfg. Legacy BIOS loads one of the two Syslinux
 # files below, depending on whether the image was written as ISO or DD mode.
-BOOT_ARGS="boot=live union=overlay username=user config components quiet loglevel=3 panic=15 ocs_1_cpu_udev noswap edd=on nomodeset enforcing=0 noeject net.ifnames=0 ocs_live_run=/opt/vstl/vstl-bench-entry.sh ocs_live_batch=yes ocs_live_extra_param= ocs_lang=en_US.UTF-8 ocs_live_keymap=NONE keyboard-layouts=NONE locales=en_US.UTF-8 ocs_live_run_tty=/dev/tty1 noprompt"
+BOOT_ARGS="boot=live union=overlay username=user config components quiet loglevel=3 panic=15 ocs_1_cpu_udev noswap consoleblank=0 edd=on nomodeset enforcing=0 noeject net.ifnames=0 ocs_live_run=/opt/vstl/vstl-bench-entry.sh ocs_live_batch=yes ocs_live_extra_param= ocs_lang=en_US.UTF-8 ocs_live_keymap=NONE keyboard-layouts=NONE locales=en_US.UTF-8 ocs_live_run_tty=/dev/tty1 noprompt"
 
 mkdir -p "$WORK_DIR/boot/grub" "$WORK_DIR/syslinux"
 cat >"$WORK_DIR/boot/grub/grub.cfg" <<EOF

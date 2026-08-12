@@ -8,6 +8,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 CAPTURE_PATH = ROOT / "bench-client" / "vstl_image_capture.py"
 ERASE_PATH = ROOT / "bench-client" / "vstl_secure_erase.py"
+ERASE = ERASE_PATH.read_text(encoding="utf-8")
 TUI = (ROOT / "bench-client" / "vstl-imaging-tui.py").read_text(encoding="utf-8")
 DEPLOY = (ROOT / "tools" / "deploy_bench_client_live.sh").read_text(encoding="utf-8")
 
@@ -338,6 +339,14 @@ def test_secure_erase_blocks_when_battery_has_no_external_power():
     assert "AC power is not detected" in result["error_message"]
     assert "BAT0" in result["evidence"]
     release.assert_not_called()
+
+
+def test_secure_erase_keeps_operator_console_awake_during_long_runs():
+    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v6"' in ERASE
+    assert "def _ensure_erase_console_keepalive" in ERASE
+    assert "setterm --blank 0 --powerdown 0 --powersave off" in ERASE
+    assert "/sys/module/kernel/parameters/consoleblank" in ERASE
+    assert "[operator console keepalive]" in ERASE
 
 
 def test_nvme_clear_assist_then_final_purge_retry_can_certify():

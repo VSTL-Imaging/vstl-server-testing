@@ -342,7 +342,7 @@ def test_secure_erase_blocks_when_battery_has_no_external_power():
 
 
 def test_secure_erase_keeps_operator_console_awake_during_long_runs():
-    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v7"' in ERASE
+    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v8"' in ERASE
     assert "def _ensure_erase_console_keepalive" in ERASE
     assert "setterm --blank 0 --powerdown 0 --powersave off" in ERASE
     assert "/sys/module/kernel/parameters/consoleblank" in ERASE
@@ -434,12 +434,8 @@ def test_hp_elitebook_640_g10_can_complete_with_clear_without_final_purge_retry(
     software_zero.assert_called_once()
 
 
-def test_hp_probook_640_g5_uses_format_crypto_purge_before_firmware_safe_clear_exception():
+def test_hp_probook_640_g5_uses_firmware_safe_clear_without_native_purge():
     calls = []
-
-    def format_crypto_rejected(device):
-        calls.append("format-crypto")
-        return False, "NVMe_FORMAT_CRYPTO", "crypto rejected"
 
     def software_zero(device, **kwargs):
         calls.append("software-zero")
@@ -453,7 +449,7 @@ def test_hp_probook_640_g5_uses_format_crypto_purge_before_firmware_safe_clear_e
         ),
         mock.patch.object(erase, "_release_block_device", return_value="released"),
         mock.patch.object(erase, "_nvme_sanitize_actions") as sanitize_actions,
-        mock.patch.object(erase, "_nvme_format_crypto", side_effect=format_crypto_rejected) as format_crypto,
+        mock.patch.object(erase, "_nvme_format_crypto") as format_crypto,
         mock.patch.object(erase, "_nvme_format_user_data") as user_data_format,
         mock.patch.object(erase, "_nvme_sanitize") as sanitize,
         mock.patch.object(erase, "_nvme_secure_discard_clear") as secure_discard,
@@ -473,22 +469,21 @@ def test_hp_probook_640_g5_uses_format_crypto_purge_before_firmware_safe_clear_e
     assert "temporary HP ProBook firmware-safe" in erase._clear_only_exception_reason(
         "HP | HP ProBook 450 G8 Notebook PC"
     )
-    assert "temporary HP ProBook 640 G5 NVMe sanitize screen-blank" in (
-        erase._nvme_sanitize_screen_blank_risk_reason(
+    assert "temporary HP ProBook 640 G5 native NVMe Purge screen-blank" in (
+        erase._nvme_native_purge_screen_blank_risk_reason(
             "HP | HP ProBook 640 G5 Notebook PC | 5PF18AV"
         )
     )
-    assert not erase._nvme_sanitize_screen_blank_risk_reason(
+    assert not erase._nvme_native_purge_screen_blank_risk_reason(
         "HP | HP EliteBook 640 G10 Notebook PC"
     )
-    assert "Policy: NVMe Purge is always attempted as the primary wipe method" in result["evidence"]
-    assert "Skipped NVMe sanitize opcodes for temporary HP ProBook 640 G5" in result["evidence"]
-    assert "trying NVMe Format Crypto as the primary Purge method" in result["evidence"]
-    assert "Primary NVMe Purge failed" in result["evidence"]
+    assert "native NVMe Purge commands are disabled for temporary HP ProBook 640 G5" in result["evidence"]
+    assert "this model blanks the display while the power LED remains on" in result["evidence"]
+    assert "native NVMe Purge was skipped by temporary HP ProBook 640 G5" in result["evidence"]
     assert "Firmware-safe Clear mode" in result["evidence"]
     sanitize_actions.assert_not_called()
-    assert calls == ["format-crypto", "software-zero"]
-    format_crypto.assert_called_once()
+    assert calls == ["software-zero"]
+    format_crypto.assert_not_called()
     sanitize.assert_not_called()
     user_data_format.assert_not_called()
     secure_discard.assert_not_called()

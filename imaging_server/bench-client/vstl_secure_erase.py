@@ -58,7 +58,7 @@ from typing import Callable, Optional
 
 
 _EVIDENCE_CAP = 6000
-SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v7"
+SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v8"
 _CONSOLE_KEEPALIVE_LOCK = threading.Lock()
 _CONSOLE_KEEPALIVE_STARTED = False
 _NVME_CLEAR_ASSIST_METHODS = (
@@ -294,13 +294,13 @@ def _clear_only_exception_reason(profile: str | None = None) -> str:
     return ""
 
 
-def _nvme_sanitize_screen_blank_risk_reason(profile: str | None = None) -> str:
-    """Return why this platform should skip NVMe sanitize opcodes.
+def _nvme_native_purge_screen_blank_risk_reason(profile: str | None = None) -> str:
+    """Return why this platform should skip native NVMe purge opcodes.
 
     HP ProBook 640 G5 units have been observed to stay powered while the panel
-    goes blank during native NVMe sanitize. NVMe Format Crypto is still a
-    Purge-class primary attempt, so this model-specific guard preserves the
-    Purge-primary policy while avoiding the opcode that blanks the screen.
+    goes blank during native NVMe sanitize/format Purge commands. This
+    model-specific guard avoids the opcodes that blank the screen and lets the
+    existing firmware-safe Clear exception run visibly instead.
     """
     normalized = re.sub(r"[^a-z0-9]+", " ", (profile or _system_dmi_profile()).lower())
     compact = normalized.replace(" ", "")
@@ -311,7 +311,7 @@ def _nvme_sanitize_screen_blank_risk_reason(profile: str | None = None) -> str:
         and all(token in words for token in ("640", "g5"))
     )
     if is_hp and (is_probook_640_g5 or "5pf18av" in compact):
-        return "temporary HP ProBook 640 G5 NVMe sanitize screen-blank policy"
+        return "temporary HP ProBook 640 G5 native NVMe Purge screen-blank policy"
     return ""
 
 
@@ -1474,7 +1474,8 @@ def run_secure_erase(
     clear_only_exception = False
     clear_only_exception_reason = ""
     clear_exception_reason = _clear_only_exception_reason()
-    sanitize_screen_blank_reason = _nvme_sanitize_screen_blank_risk_reason()
+    native_purge_screen_blank_reason = _nvme_native_purge_screen_blank_risk_reason()
+    native_purge_blocked_for_screen_blank = False
     evidence_blocks.append("[operator console keepalive]\n" + _ensure_erase_console_keepalive())
     power_ok, power_ev, power_error = _erase_power_guard()
     evidence_blocks.append("[power stability]\n" + power_ev)
@@ -1501,16 +1502,42 @@ def run_secure_erase(
     if dtype == "NVMe":
         release_ev = _release_block_device(device)
         evidence_blocks.append("[pre-erase device release]\n" + release_ev)
-        evidence_blocks.append("Policy: NVMe Purge is always attempted as the primary wipe method.")
-        ok, method = _run_nvme_purge_sequence(
-            device,
-            evidence_blocks,
-            tried,
-            progress_callback,
-            "initial primary",
-            skip_sanitize_reason=sanitize_screen_blank_reason,
-        )
-        if not ok and clear_exception_reason:
+        if native_purge_screen_blank_reason and clear_exception_reason:
+            native_purge_blocked_for_screen_blank = True
+            tried.append("NVMe_PURGE_SKIPPED_SCREEN_BLANK_RISK")
+            evidence_blocks.append(
+                "Policy: NVMe Purge is the primary wipe method, but native "
+                f"NVMe Purge commands are disabled for {native_purge_screen_blank_reason}; "
+                "this model blanks the display while the power LED remains on."
+            )
+            clear_ok, clear_method, clear_ev = _run_nvme_clear_assist(
+                device, drive, progress_callback, firmware_safe_only=True,
+            )
+            evidence_blocks.append("[NVMe Clear assist]\n" + clear_ev)
+            if clear_ok:
+                ok = True
+                method = clear_method
+                clear_only_exception = True
+                clear_only_exception_reason = clear_exception_reason
+                evidence_blocks.append(
+                    f"Firmware-safe Clear completed using {clear_method}; "
+                    f"native NVMe Purge was skipped by {native_purge_screen_blank_reason}."
+                )
+            else:
+                evidence_blocks.append(
+                    f"Firmware-safe Clear failed under {clear_exception_reason}; "
+                    f"tried {clear_method or ', '.join(_NVME_CLEAR_ASSIST_METHODS)}."
+                )
+        else:
+            evidence_blocks.append("Policy: NVMe Purge is always attempted as the primary wipe method.")
+            ok, method = _run_nvme_purge_sequence(
+                device, evidence_blocks, tried, progress_callback, "initial primary",
+            )
+        if (
+            not ok
+            and clear_exception_reason
+            and not native_purge_blocked_for_screen_blank
+        ):
             evidence_blocks.append(
                 f"Primary NVMe Purge failed on {clear_exception_reason}; "
                 "running firmware-safe Clear fallback only after the primary "
@@ -1536,7 +1563,7 @@ def run_secure_erase(
                     f"{clear_method or ', '.join(_NVME_CLEAR_ASSIST_METHODS)}. "
                     "The drive was not certified."
                 )
-        elif not ok:
+        elif not ok and not native_purge_blocked_for_screen_blank:
             evidence_blocks.append(
                 "Direct NVMe purge failed; running Clear assist methods "
                 f"{', '.join(_NVME_CLEAR_ASSIST_METHODS)} before the required "

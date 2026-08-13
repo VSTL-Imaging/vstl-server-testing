@@ -80,7 +80,7 @@ _UNSUPPORTED_WIPE_STANDARD = "Unsupported data sanitization method"
 _UNSUPPORTED_WIPE_MESSAGE = (
     "Clear-class and unknown wipe methods are disabled. "
     "Only approved purge-class methods can issue a certificate or authorize capture, "
-    "except temporary model-specific Clear-only exceptions."
+    "except results explicitly marked as temporary Clear fallback after failed Purge."
 )
 
 TESTING_MODE_CTRL_T = 20
@@ -7345,7 +7345,6 @@ def _clear_exception_allowed(result: dict | None, ident: dict | None) -> bool:
     return (
         bool((result or {}).get("clear_only_exception"))
         and method in _CLEAR_WIPE_METHOD_STANDARDS
-        and bool(_clear_only_exception_reason(ident))
     )
 
 

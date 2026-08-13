@@ -342,7 +342,7 @@ def test_secure_erase_blocks_when_battery_has_no_external_power():
 
 
 def test_secure_erase_keeps_operator_console_awake_during_long_runs():
-    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v10"' in ERASE
+    assert 'SECURE_ERASE_CLIENT_BUILD = "secure-erase-purge-primary-v11"' in ERASE
     assert "def _ensure_erase_console_keepalive" in ERASE
     assert "setterm --blank 0 --powerdown 0 --powersave off" in ERASE
     assert "/sys/module/kernel/parameters/consoleblank" in ERASE
@@ -355,7 +355,7 @@ def test_secure_erase_keeps_operator_console_awake_during_long_runs():
     assert "[operator console keepalive]" in ERASE
 
 
-def test_nvme_clear_assist_then_final_purge_retry_can_certify():
+def test_nvme_clear_assist_can_complete_after_failed_primary_purge():
     calls = []
 
     def crypto_fail(device):
@@ -368,14 +368,7 @@ def test_nvme_clear_assist_then_final_purge_retry_can_certify():
 
     with (
         mock.patch.object(erase, "_release_block_device", return_value="released"),
-        mock.patch.object(
-            erase,
-            "_nvme_sanitize_actions",
-            side_effect=[
-                ([], "sanicap=0x00000000"),
-                ([2], "sanicap=0x00000001"),
-            ],
-        ),
+        mock.patch.object(erase, "_nvme_sanitize_actions", return_value=([], "sanicap=0x00000000")),
         mock.patch.object(erase, "_nvme_format_crypto", side_effect=crypto_fail),
         mock.patch.object(
             erase,
@@ -394,10 +387,12 @@ def test_nvme_clear_assist_then_final_purge_retry_can_certify():
         result = erase.run_secure_erase(_drive())
 
     assert result["ok"]
-    assert result["method"] == "NVMe_SANITIZE_BLOCK_ERASE"
+    assert result["method"] == "NVMe_FORMAT_USER_DATA"
+    assert result["standard"] == "NIST SP 800-88 Clear"
+    assert result["clear_only_exception"] is True
     assert "Clear assist completed using NVMe_FORMAT_USER_DATA" in result["evidence"]
     assert "NVMe_FORMAT_USER_DATA" in result["evidence"]
-    assert calls == ["crypto", "sanitize-2"]
+    assert calls == ["crypto"]
     user_data_format.assert_called_once()
     secure_discard.assert_not_called()
     software_zero.assert_not_called()
@@ -430,14 +425,14 @@ def test_hp_elitebook_640_g10_can_complete_with_clear_without_final_purge_retry(
         result = erase.run_secure_erase(_drive())
 
     assert result["ok"]
-    assert result["method"] == "NVMe_SOFTWARE_ZERO_CLEAR"
+    assert result["method"] == "NVMe_FORMAT_USER_DATA"
     assert result["standard"] == "NIST SP 800-88 Clear"
     assert result["clear_only_exception"] is True
     assert "Purge retry skipped by temporary HP EliteBook 640 G10" in result["evidence"]
-    user_data_format.assert_not_called()
+    user_data_format.assert_called_once()
     sanitize.assert_not_called()
     secure_discard.assert_not_called()
-    software_zero.assert_called_once()
+    software_zero.assert_not_called()
 
 
 def test_hp_probook_640_g5_uses_firmware_safe_clear_without_native_purge():
@@ -526,15 +521,15 @@ def test_hp_elitebook_850_g5_can_complete_with_clear_without_final_purge_retry()
         result = erase.run_secure_erase(_drive())
 
     assert result["ok"]
-    assert result["method"] == "NVMe_SOFTWARE_ZERO_CLEAR"
+    assert result["method"] == "NVMe_FORMAT_USER_DATA"
     assert result["standard"] == "NIST SP 800-88 Clear"
     assert result["clear_only_exception"] is True
     assert "temporary HP EliteBook 850 G5 clear-only policy" in result["clear_only_exception_reason"]
     assert "Purge retry skipped by temporary HP EliteBook 850 G5" in result["evidence"]
-    user_data_format.assert_not_called()
+    user_data_format.assert_called_once()
     sanitize.assert_not_called()
     secure_discard.assert_not_called()
-    software_zero.assert_called_once()
+    software_zero.assert_not_called()
 
 
 def test_hp_elitebook_850_g6_can_complete_with_clear_without_final_purge_retry():
@@ -564,15 +559,15 @@ def test_hp_elitebook_850_g6_can_complete_with_clear_without_final_purge_retry()
         result = erase.run_secure_erase(_drive())
 
     assert result["ok"]
-    assert result["method"] == "NVMe_SOFTWARE_ZERO_CLEAR"
+    assert result["method"] == "NVMe_FORMAT_USER_DATA"
     assert result["standard"] == "NIST SP 800-88 Clear"
     assert result["clear_only_exception"] is True
     assert "temporary HP EliteBook 850 G6 clear-only policy" in result["clear_only_exception_reason"]
     assert "Purge retry skipped by temporary HP EliteBook 850 G6" in result["evidence"]
-    user_data_format.assert_not_called()
+    user_data_format.assert_called_once()
     sanitize.assert_not_called()
     secure_discard.assert_not_called()
-    software_zero.assert_called_once()
+    software_zero.assert_not_called()
 
 
 def test_dell_latitude_5520_can_complete_with_clear_without_final_purge_retry():
@@ -602,15 +597,15 @@ def test_dell_latitude_5520_can_complete_with_clear_without_final_purge_retry():
         result = erase.run_secure_erase(_drive())
 
     assert result["ok"]
-    assert result["method"] == "NVMe_SOFTWARE_ZERO_CLEAR"
+    assert result["method"] == "NVMe_FORMAT_USER_DATA"
     assert result["standard"] == "NIST SP 800-88 Clear"
     assert result["clear_only_exception"] is True
     assert "temporary Dell Latitude 5520 clear-only policy" in result["clear_only_exception_reason"]
     assert "Purge retry skipped by temporary Dell Latitude 5520" in result["evidence"]
-    user_data_format.assert_not_called()
+    user_data_format.assert_called_once()
     sanitize.assert_not_called()
     secure_discard.assert_not_called()
-    software_zero.assert_called_once()
+    software_zero.assert_not_called()
 
 
 def test_dell_latitude_5330_and_5440_can_complete_with_clear_without_final_purge_retry():
@@ -641,15 +636,15 @@ def test_dell_latitude_5330_and_5440_can_complete_with_clear_without_final_purge
             result = erase.run_secure_erase(_drive())
 
         assert result["ok"]
-        assert result["method"] == "NVMe_SOFTWARE_ZERO_CLEAR"
+        assert result["method"] == "NVMe_FORMAT_USER_DATA"
         assert result["standard"] == "NIST SP 800-88 Clear"
         assert result["clear_only_exception"] is True
         assert f"temporary Dell Latitude {model} clear-only policy" in result["clear_only_exception_reason"]
         assert f"Purge retry skipped by temporary Dell Latitude {model}" in result["evidence"]
-        user_data_format.assert_not_called()
+        user_data_format.assert_called_once()
         sanitize.assert_not_called()
         secure_discard.assert_not_called()
-        software_zero.assert_called_once()
+        software_zero.assert_not_called()
 
 
 def test_lenovo_x1_carbon_8th_gen_can_complete_with_clear_without_final_purge_retry():
@@ -679,7 +674,7 @@ def test_lenovo_x1_carbon_8th_gen_can_complete_with_clear_without_final_purge_re
         result = erase.run_secure_erase(_drive())
 
     assert result["ok"]
-    assert result["method"] == "NVMe_SOFTWARE_ZERO_CLEAR"
+    assert result["method"] == "NVMe_FORMAT_USER_DATA"
     assert result["standard"] == "NIST SP 800-88 Clear"
     assert result["clear_only_exception"] is True
     assert "temporary Lenovo ThinkPad X1 Carbon 8th Gen clear-only policy" in result["clear_only_exception_reason"]
@@ -687,10 +682,10 @@ def test_lenovo_x1_carbon_8th_gen_can_complete_with_clear_without_final_purge_re
     assert "temporary Lenovo ThinkPad X1 Carbon 8th Gen" in erase._clear_only_exception_reason(
         "LENOVO | ThinkPad X1 Carbon 8th Gen"
     )
-    user_data_format.assert_not_called()
+    user_data_format.assert_called_once()
     sanitize.assert_not_called()
     secure_discard.assert_not_called()
-    software_zero.assert_called_once()
+    software_zero.assert_not_called()
 
 
 def test_nvme_format_retries_controller_namespace_variant():
@@ -716,7 +711,7 @@ def test_nvme_format_retries_controller_namespace_variant():
     ]
 
 
-def test_nvme_clear_assist_success_still_fails_without_final_purge():
+def test_nvme_clear_assist_success_can_complete_after_failed_primary_purge():
     with (
         mock.patch.object(erase, "_release_block_device", return_value="released"),
         mock.patch.object(erase, "_nvme_sanitize_actions", return_value=([], "sanicap=0x00000000")),
@@ -728,21 +723,25 @@ def test_nvme_clear_assist_success_still_fails_without_final_purge():
         ) as user_data_format,
         mock.patch.object(erase, "_nvme_secure_discard_clear") as secure_discard,
         mock.patch.object(erase, "_software_zero_clear") as software_zero,
-        mock.patch.object(erase, "_verify_wipe_sample") as verify_sample,
+        mock.patch.object(erase, "_verify_wipe_sample", return_value=(True, "sample clear")) as verify_sample,
     ):
         result = erase.run_secure_erase(_drive())
 
-    assert not result["ok"]
+    assert result["ok"]
+    assert result["method"] == "NVMe_FORMAT_USER_DATA"
+    assert result["standard"] == "NIST SP 800-88 Clear"
+    assert result["clear_only_exception"] is True
+    assert "temporary all-model Clear fallback policy after failed Purge" in result["clear_only_exception_reason"]
     assert "Clear assist completed using NVMe_FORMAT_USER_DATA" in result["evidence"]
-    assert "final NVMe Purge retry still failed" in result["evidence"]
-    assert "Certification is blocked" in result["error_message"]
+    assert "primary NVMe Purge was attempted first and failed" in result["evidence"]
+    assert "final NVMe Purge retry skipped by temporary all-model Clear fallback policy after failed Purge" in result["evidence"]
     user_data_format.assert_called_once()
     secure_discard.assert_not_called()
     software_zero.assert_not_called()
-    verify_sample.assert_not_called()
+    verify_sample.assert_called_once()
 
 
-def test_nvme_clear_assist_falls_through_to_secure_discard():
+def test_nvme_clear_assist_can_complete_with_secure_discard():
     with (
         mock.patch.object(erase, "_release_block_device", return_value="released"),
         mock.patch.object(
@@ -764,22 +763,20 @@ def test_nvme_clear_assist_falls_through_to_secure_discard():
             "_nvme_secure_discard_clear",
             return_value=(True, "NVMe_SECURE_DISCARD_CLEAR", "secure discard completed"),
         ) as secure_discard,
-        mock.patch.object(
-            erase,
-            "_nvme_sanitize",
-            return_value=(True, "NVMe_SANITIZE_CRYPTO_ERASE", "crypto sanitize accepted"),
-        ),
+        mock.patch.object(erase, "_nvme_sanitize") as sanitize,
         mock.patch.object(erase, "_software_zero_clear") as software_zero,
         mock.patch.object(erase, "_verify_wipe_sample", return_value=(True, "sample clear")),
     ):
         result = erase.run_secure_erase(_drive())
 
     assert result["ok"]
-    assert result["method"] == "NVMe_SANITIZE_CRYPTO_ERASE"
-    assert "NVMe_SOFTWARE_ZERO_CLEAR" in result["evidence"]
+    assert result["method"] == "NVMe_SECURE_DISCARD_CLEAR"
+    assert result["standard"] == "NIST SP 800-88 Clear"
+    assert result["clear_only_exception"] is True
     assert "secure discard completed" in result["evidence"]
     user_data_format.assert_called_once()
     secure_discard.assert_called_once()
+    sanitize.assert_not_called()
     software_zero.assert_not_called()
 
 
@@ -957,7 +954,7 @@ def test_nvme_sanitize_unparseable_status_fails_quickly():
     assert "did not expose SSTAT/status after 5 polls" in evidence
 
 
-def test_clear_class_methods_are_certificate_mapped_only_for_model_exception():
+def test_clear_class_methods_are_certificate_mapped_for_result_marked_fallback():
     assert '"NVMe_SANITIZE_OVERWRITE": "NIST SP 800-88 Purge"' in TUI
     assert "SECURE_ERASE_CLIENT_BUILD" in TUI
     assert "vstl-secure-erase-worker" in TUI
@@ -970,7 +967,7 @@ def test_clear_class_methods_are_certificate_mapped_only_for_model_exception():
     assert '"NVMe_SOFTWARE_ZERO_CLEAR": "NIST SP 800-88 Clear"' in TUI
     assert "def _clear_exception_allowed(" in TUI
     assert 'bool((result or {}).get("clear_only_exception"))' in TUI
-    assert "and bool(_clear_only_exception_reason(ident))" in TUI
+    assert "and bool(_clear_only_exception_reason(ident))" not in TUI
     assert "temporary HP EliteBook 850 G5 clear-only policy" in TUI
     assert "temporary HP EliteBook 850 G6 clear-only policy" in TUI
     assert "temporary HP ProBook 640 G5 clear-only policy" in TUI
@@ -997,7 +994,7 @@ def test_tui_secure_erase_retry_is_failure_only():
     assert "_retry_confirmed=True" in TUI
 
 
-def test_sata_ssd_blkdiscard_assist_then_final_purge_retry_can_certify():
+def test_sata_ssd_blkdiscard_assist_can_complete_after_failed_primary_purge():
     drive = _drive(
         device="/dev/sda",
         device_type="SATA_SSD",
@@ -1008,11 +1005,8 @@ def test_sata_ssd_blkdiscard_assist_then_final_purge_retry_can_certify():
         mock.patch.object(
             erase,
             "_hdparm_sanitize_erase",
-            side_effect=[
-                (False, "", "ATA SANITIZE unsupported"),
-                (True, "ATA_SANITIZE_BLOCK_ERASE", "ATA sanitize accepted after clear"),
-            ],
-        ),
+            return_value=(False, "", "ATA SANITIZE unsupported"),
+        ) as sanitize_erase,
         mock.patch.object(
             erase,
             "_hdparm_security_erase",
@@ -1028,9 +1022,13 @@ def test_sata_ssd_blkdiscard_assist_then_final_purge_retry_can_certify():
         result = erase.run_secure_erase(drive)
 
     assert result["ok"]
-    assert result["method"] == "ATA_SANITIZE_BLOCK_ERASE"
+    assert result["method"] == "BLKDISCARD"
+    assert result["standard"] == "NIST SP 800-88 Clear"
+    assert result["clear_only_exception"] is True
     assert result["verified"]
     assert "Clear assist completed using BLKDISCARD" in result["evidence"]
+    assert "primary SATA SSD Purge was attempted first and failed" in result["evidence"]
+    sanitize_erase.assert_called_once()
     blkdiscard.assert_called_once()
 
 
@@ -1266,7 +1264,7 @@ def test_erase_failure_reason_explains_stale_enabled_security_state():
     assert "earlier ata security password state" in reason.lower()
 
 
-def test_legacy_shell_client_requires_final_purge_after_clear_assist():
+def test_legacy_shell_client_allows_clear_after_failed_primary_purge():
     legacy = (ROOT / "bench-client" / "vstl-imaging-client.sh").read_text(
         encoding="utf-8"
     )
@@ -1275,18 +1273,12 @@ def test_legacy_shell_client_requires_final_purge_after_clear_assist():
     )[1].split("# ---------- 6. POST /api/imaging/ingest ----------", 1)[0]
 
     assert "Clear assist" in wipe_block
-    assert "required final Purge" in wipe_block
-    assert "MODEL_CLEAR_ONLY_EXCEPTION=1" in wipe_block
-    assert 'MODEL_CLEAR_ONLY_LABEL="HP EliteBook 640 G10"' in wipe_block
-    assert 'MODEL_CLEAR_ONLY_LABEL="HP EliteBook 850 G5"' in wipe_block
-    assert 'MODEL_CLEAR_ONLY_LABEL="HP EliteBook 850 G6"' in wipe_block
-    assert 'MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5330"' in wipe_block
-    assert 'MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5440"' in wipe_block
-    assert 'MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5520"' in wipe_block
-    assert 'MODEL_CLEAR_ONLY_LABEL="Lenovo ThinkPad X1 Carbon 8th Gen"' in wipe_block
-    assert "temporary clear-only policy allows completion" in wipe_block
-    assert "final NVMe Purge retry failed after Clear assist" in wipe_block
-    assert "final ATA Purge retry failed after Clear assist" in wipe_block
+    assert "TEMP_CLEAR_FALLBACK_LABEL=\"temporary all-model Clear fallback after failed Purge\"" in wipe_block
+    assert "allows completion" in wipe_block
+    assert "MODEL_CLEAR_ONLY_EXCEPTION" not in wipe_block
+    assert "MODEL_CLEAR_ONLY_LABEL" not in wipe_block
+    assert "final NVMe Purge retry failed after Clear assist" not in wipe_block
+    assert "final ATA Purge retry failed after Clear assist" not in wipe_block
     assert 'nvme format "$PRIMARY_DISK" -s 2 --force' in wipe_block
     assert 'nvme format "$PRIMARY_DISK" -s 1 --force' in wipe_block
     assert 'nvme format "$NVME_CONTROLLER" -n "$NVME_NSID" -s 2 --force' in wipe_block

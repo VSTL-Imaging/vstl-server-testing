@@ -12,8 +12,8 @@
 #   3. Lookup golden image:   GET  /api/imaging/lookup?model=...
 #   4. Trigger FOG image deployment via FOG's API
 #   5. Run hardware diagnostics (smartctl, stress-ng burn-in)
-#   6. Run certified secure wipe; Clear assist is allowed only before a
-#      required final Purge retry
+#   6. Run certified secure wipe; Purge is primary, and Clear is temporarily
+#      allowed as fallback when that unit rejects Purge
 #   7. Send full audit + wipe data: POST /api/imaging/ingest
 #   8. Power off (or wait for next bench laptop)
 #
@@ -440,55 +440,10 @@ WIPE_INFO_JSON='null'
 if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
     log "WIPE requested — running secure erase on $PRIMARY_DISK"
     WIPE_START=$(date -Iseconds)
-    # Clear-class helpers are allowed only as a destructive assist between
-    # failed direct purge and the required final purge retry, except the
-    # temporary model-specific clear-only exception.
-    DMI_PROFILE="$(
-        cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name \
-            /sys/class/dmi/id/product_version 2>/dev/null || true
-    )"
-    MODEL_CLEAR_ONLY_EXCEPTION=0
-    MODEL_CLEAR_ONLY_LABEL=""
-    if echo "$DMI_PROFILE" | grep -Eiq 'hp|hewlett' \
-        && echo "$DMI_PROFILE" | grep -Eiq 'elitebook' \
-        && echo "$DMI_PROFILE" | grep -Eiq '\b640\b' \
-        && echo "$DMI_PROFILE" | grep -Eiq '\bg10\b'; then
-        MODEL_CLEAR_ONLY_EXCEPTION=1
-        MODEL_CLEAR_ONLY_LABEL="HP EliteBook 640 G10"
-    elif echo "$DMI_PROFILE" | grep -Eiq 'hp|hewlett' \
-        && echo "$DMI_PROFILE" | grep -Eiq 'elitebook' \
-        && echo "$DMI_PROFILE" | grep -Eiq '\b850\b' \
-        && echo "$DMI_PROFILE" | grep -Eiq '\bg5\b'; then
-        MODEL_CLEAR_ONLY_EXCEPTION=1
-        MODEL_CLEAR_ONLY_LABEL="HP EliteBook 850 G5"
-    elif echo "$DMI_PROFILE" | grep -Eiq 'hp|hewlett' \
-        && echo "$DMI_PROFILE" | grep -Eiq 'elitebook' \
-        && echo "$DMI_PROFILE" | grep -Eiq '\b850\b' \
-        && echo "$DMI_PROFILE" | grep -Eiq '\bg6\b'; then
-        MODEL_CLEAR_ONLY_EXCEPTION=1
-        MODEL_CLEAR_ONLY_LABEL="HP EliteBook 850 G6"
-    elif echo "$DMI_PROFILE" | grep -Eiq 'dell' \
-        && echo "$DMI_PROFILE" | grep -Eiq 'latitude' \
-        && echo "$DMI_PROFILE" | grep -Eiq '\b5330\b'; then
-        MODEL_CLEAR_ONLY_EXCEPTION=1
-        MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5330"
-    elif echo "$DMI_PROFILE" | grep -Eiq 'dell' \
-        && echo "$DMI_PROFILE" | grep -Eiq 'latitude' \
-        && echo "$DMI_PROFILE" | grep -Eiq '\b5440\b'; then
-        MODEL_CLEAR_ONLY_EXCEPTION=1
-        MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5440"
-    elif echo "$DMI_PROFILE" | grep -Eiq 'dell' \
-        && echo "$DMI_PROFILE" | grep -Eiq 'latitude' \
-        && echo "$DMI_PROFILE" | grep -Eiq '\b5520\b'; then
-        MODEL_CLEAR_ONLY_EXCEPTION=1
-        MODEL_CLEAR_ONLY_LABEL="Dell Latitude 5520"
-    elif echo "$DMI_PROFILE" | grep -Eiq 'lenovo' \
-        && echo "$DMI_PROFILE" | grep -Eiq 'x1' \
-        && echo "$DMI_PROFILE" | grep -Eiq 'carbon' \
-        && echo "$DMI_PROFILE" | grep -Eiq '(\bgen[[:space:]]*8\b|\b8th\b)'; then
-        MODEL_CLEAR_ONLY_EXCEPTION=1
-        MODEL_CLEAR_ONLY_LABEL="Lenovo ThinkPad X1 Carbon 8th Gen"
-    fi
+    # Purge remains the primary wipe. For now, if the unit rejects native
+    # Purge and a Clear fallback succeeds, record the result as Clear instead
+    # of failing only because the model is not on an exception list.
+    TEMP_CLEAR_FALLBACK_LABEL="temporary all-model Clear fallback after failed Purge"
     WIPE_STANDARD="NIST 800-88 Purge"
     if [[ "$PRIMARY_DISK" =~ nvme ]]; then
         NVME_CONTROLLER="/dev/$(basename "$PRIMARY_DISK" | sed -E 's/n[0-9]+$//')"
@@ -507,23 +462,14 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
                 || dd if=/dev/zero of="$PRIMARY_DISK" bs=16M status=progress conv=fsync
         }
         if ! nvme_purge_crypto; then
-            log "Direct NVMe purge failed; running Clear assist before required final Purge retry"
+            log "Direct NVMe purge failed; running Clear assist as temporary fallback"
             if ! nvme_clear_assist; then
-                log "FATAL: NVMe Clear assist failed; final Purge retry cannot be trusted"
+                log "FATAL: NVMe Clear assist failed after primary Purge failure"
                 exit 7
             fi
-            if [[ "$MODEL_CLEAR_ONLY_EXCEPTION" == "1" ]]; then
-                log "NVMe Clear assist completed; $MODEL_CLEAR_ONLY_LABEL temporary clear-only policy allows completion"
-                METHOD="NVMe Clear Erase ($MODEL_CLEAR_ONLY_LABEL temporary exception)"
-                WIPE_STANDARD="NIST 800-88 Clear"
-            else
-                log "NVMe Clear assist completed; retrying required final Purge"
-                if ! nvme_purge_crypto; then
-                    log "FATAL: final NVMe Purge retry failed after Clear assist"
-                    exit 7
-                fi
-                METHOD="NVMe Format Crypto Erase"
-            fi
+            log "NVMe Clear assist completed; $TEMP_CLEAR_FALLBACK_LABEL allows completion"
+            METHOD="NVMe Clear Erase ($TEMP_CLEAR_FALLBACK_LABEL)"
+            WIPE_STANDARD="NIST 800-88 Clear"
         else
             METHOD="NVMe Format Crypto Erase"
         fi
@@ -537,22 +483,14 @@ if [[ "${1:-}" == "--wipe" && -n "$PRIMARY_DISK" ]]; then
                 || hdparm --user-master u --security-erase "$ERASE_PASSWORD" "$PRIMARY_DISK"
         }
         if ! ata_purge; then
-            log "Direct ATA purge failed; running BLKDISCARD Clear assist before required final Purge retry"
+            log "Direct ATA purge failed; running BLKDISCARD Clear assist as temporary fallback"
             if ! blkdiscard -f "$PRIMARY_DISK"; then
-                log "FATAL: ATA Clear assist failed; final Purge retry cannot be trusted"
+                log "FATAL: ATA Clear assist failed after primary Purge failure"
                 exit 7
             fi
-            if [[ "$MODEL_CLEAR_ONLY_EXCEPTION" == "1" ]]; then
-                log "BLKDISCARD Clear assist completed; $MODEL_CLEAR_ONLY_LABEL temporary clear-only policy allows completion"
-                METHOD="BLKDISCARD Clear ($MODEL_CLEAR_ONLY_LABEL temporary exception)"
-                WIPE_STANDARD="NIST 800-88 Clear"
-            else
-                if ! ata_purge; then
-                    log "FATAL: final ATA Purge retry failed after Clear assist"
-                    exit 7
-                fi
-                METHOD="ATA Security Erase Enhanced"
-            fi
+            log "BLKDISCARD Clear assist completed; $TEMP_CLEAR_FALLBACK_LABEL allows completion"
+            METHOD="BLKDISCARD Clear ($TEMP_CLEAR_FALLBACK_LABEL)"
+            WIPE_STANDARD="NIST 800-88 Clear"
         else
             METHOD="ATA Security Erase Enhanced"
         fi

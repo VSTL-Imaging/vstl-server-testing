@@ -6904,6 +6904,22 @@ def _attach_audit_submission_status(payload: dict, ok: bool, message: str) -> No
 # ---------------------------------------------------------------------------
 # Phase 3 — Generic API helpers + Erase / Capture / Restore screens
 # ---------------------------------------------------------------------------
+def _attach_local_only_submission_status(payload: dict, message: str) -> None:
+    """Mark a server-data-only record that must not be sent to the VSTL app."""
+    recorded_at = datetime.now(timezone.utc).isoformat()
+    status = "Server Data Only"
+    payload["audit_submission_status"] = status
+    payload["audit_submission_ok"] = False
+    payload["audit_submission_message"] = str(message or "")
+    payload["audit_submission_recorded_at"] = recorded_at
+    payload["cloud_audit"] = {
+        "ok": False,
+        "status": status,
+        "message": str(message or ""),
+        "recorded_at": recorded_at,
+    }
+
+
 def _cfg_enabled(cfg: dict, name: str, default: bool = True) -> bool:
     raw = str(cfg.get(name, "")).strip().lower()
     if not raw:
@@ -7761,6 +7777,7 @@ def screen_run_erase(stdscr, drive: dict) -> dict:
 def screen_erase_result(stdscr, result: dict, cert_resp: dict,
                          cert_ok: bool,
                          reporting_suppressed: bool = False,
+                         app_submission_suppressed: bool = False,
                          allow_retry: bool = False) -> str:
     """Show summary + verification hash. Returns continue or retry."""
     stdscr.erase()
@@ -7771,6 +7788,14 @@ def screen_erase_result(stdscr, result: dict, cert_resp: dict,
         top_line = ("Erase completed; report submission is disabled", top_attr)
         detail_lines = [(
             "Testing mode did not issue a certificate or send a bench report.",
+            curses.color_pair(DIM_PAIR),
+        )]
+    elif result.get("ok") and app_submission_suppressed and cert_ok:
+        draw_header(stdscr, "Phase 3 - Erase Certified / Server Data Only")
+        top_attr = curses.A_BOLD | curses.color_pair(GREEN_PAIR)
+        top_line = ("Erase completed and local certificate issued", top_attr)
+        detail_lines = [(
+            "Restore OS Only skipped VSTL app posting; server data will be saved.",
             curses.color_pair(DIM_PAIR),
         )]
     elif result.get("ok") and cert_ok:
@@ -8687,7 +8712,8 @@ def screen_run_restore(stdscr, ident: dict, drive: dict,
 
 
 def screen_restore_result(stdscr, result: dict, log_ok: bool,
-                          reporting_suppressed: bool = False) -> None:
+                          reporting_suppressed: bool = False,
+                          reporting_suppressed_label: str = "Testing mode") -> None:
     stdscr.erase()
     _h, w = stdscr.getmaxyx()
     if result.get("ok"):
@@ -8726,7 +8752,7 @@ def screen_restore_result(stdscr, result: dict, log_ok: bool,
                           curses.color_pair(RED_PAIR)))
     if reporting_suppressed:
         lines.append(("", 0))
-        lines.append(("Testing mode: restore log was not posted.",
+        lines.append((f"{reporting_suppressed_label}: restore log was not posted.",
                        curses.color_pair(DIM_PAIR)))
     elif not log_ok:
         lines.append(("", 0))
@@ -8801,6 +8827,7 @@ def _check_secure_erase_authorization(
 def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
                          tech: str, operator: dict | None = None,
                          suppress_reporting: bool = False,
+                         suppress_app_submission: bool = False,
                          _retry_confirmed: bool = False) -> Optional[dict]:
     """Run the full Phase-3 Secure Erase sub-flow:
        detect drive -> confirm -> wipe -> POST certificate -> show result.
@@ -8843,6 +8870,18 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
             "remote_error": "testing mode suppressed",
         }
         result["testing_mode_reporting_suppressed"] = True
+    elif suppress_app_submission and result.get("ok") and result.get("method"):
+        local_cert = _local_secure_erase_certificate(
+            ident, drive, result, cfg, tech,
+        )
+        cert_resp = dict(local_cert)
+        cert_resp.update({
+            "certificate_status": "issued_local_only",
+            "remote_post_ok": False,
+            "remote_error": "Restore OS Only: VSTL app certificate submission skipped",
+        })
+        result["app_submission_suppressed"] = True
+        cert_ok = True
     elif result.get("ok") and result.get("method"):
         local_cert = _local_secure_erase_certificate(
             ident, drive, result, cfg, tech,
@@ -8954,6 +8993,7 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
         and result.get("verified")
         and cert_resp
         and not suppress_reporting
+        and not suppress_app_submission
     ):
         report_ok, report_msg = _post_secure_erase_local_report(
             ident, drive, result, cert_resp, gate_record, cfg, tech, operator,
@@ -8968,6 +9008,7 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
         cert_resp,
         cert_ok,
         reporting_suppressed=suppress_reporting,
+        app_submission_suppressed=suppress_app_submission,
         allow_retry=not result.get("ok"),
     )
     if result_action == "retry":
@@ -8978,6 +9019,7 @@ def phase3_secure_erase(stdscr, ident: dict, cfg: dict,
             tech,
             operator,
             suppress_reporting=suppress_reporting,
+            suppress_app_submission=suppress_app_submission,
             _retry_confirmed=True,
         )
     return {
@@ -9095,7 +9137,8 @@ def phase3_capture(stdscr, ident: dict, cfg: dict,
 
 def phase3_restore(stdscr, ident: dict, cfg: dict,
                     tech: str, cpu_info: Optional[dict] = None,
-                    suppress_reporting: bool = False) -> Optional[dict]:
+                    suppress_reporting: bool = False,
+                    reporting_suppressed_label: str = "Testing mode") -> Optional[dict]:
     """Run the full Phase-3 Restore sub-flow:
        lookup golden copy -> mount NFS -> restore -> POST result.
     The Server Process lookup order is exact SKU/Unit Part Number first,
@@ -9177,6 +9220,7 @@ def phase3_restore(stdscr, ident: dict, cfg: dict,
         result,
         log_ok,
         reporting_suppressed=suppress_reporting,
+        reporting_suppressed_label=reporting_suppressed_label,
     )
     return {
         "result": result,
@@ -9280,7 +9324,8 @@ def screen_completion(stdscr, ident: dict, ingest_ok: bool, ingest_msg: str,
                       qc_summary: Optional[dict] = None,
                       burn_result: Optional[dict] = None,
                       local_report_ok: bool = True,
-                      local_report_msg: str = "") -> None:
+                      local_report_msg: str = "",
+                      app_submission_skipped: bool = False) -> None:
     """Final summary. Operator presses ENTER to restart the laptop."""
     stdscr.erase()
     draw_header(stdscr, "Phase 2 Complete")
@@ -9289,8 +9334,16 @@ def screen_completion(stdscr, ident: dict, ingest_ok: bool, ingest_msg: str,
     serial = ident["serial_no"]
     cloud_saved = bool(ingest_ok)
     reconcile_warning = "flagged for reconcile" in str(ingest_msg or "").lower()
-    color = YELLOW_PAIR if reconcile_warning else (GREEN_PAIR if cloud_saved else RED_PAIR)
-    if cloud_saved and reconcile_warning:
+    color = (
+        GREEN_PAIR if app_submission_skipped and local_report_ok
+        else YELLOW_PAIR if reconcile_warning
+        else (GREEN_PAIR if cloud_saved else RED_PAIR)
+    )
+    if app_submission_skipped and local_report_ok:
+        status_text = "Report saved to server data only"
+    elif app_submission_skipped:
+        status_text = "Server data save warning"
+    elif cloud_saved and reconcile_warning:
         status_text = "WARNING: Audit saved - unit flagged for reconcile"
     elif cloud_saved and local_report_ok:
         status_text = "✅  Report saved and audit submitted"
@@ -9372,8 +9425,14 @@ def screen_completion(stdscr, ident: dict, ingest_ok: bool, ingest_msg: str,
         f"Server report: {local_report_status} - {local_report_msg[: max(20, w - 28)]}",
         curses.color_pair(GREEN_PAIR if local_report_ok else YELLOW_PAIR),
     ))
+    cloud_label = "VSTL app   " if app_submission_skipped else "Cloud audit"
+    cloud_msg = (
+        "skipped for Restore OS Only"
+        if app_submission_skipped
+        else ingest_msg[: max(20, w - 24)]
+    )
     lines.append((
-        f"Cloud audit  : {ingest_msg[: max(20, w - 24)]}",
+        f"{cloud_label}: {cloud_msg}",
         curses.color_pair(YELLOW_PAIR if reconcile_warning else DIM_PAIR),
     ))
 
@@ -9774,6 +9833,7 @@ def run(stdscr) -> int:
     pre_phase3_os_info: dict | None = None
     post_qc_details: dict | None = None
     hardware_label_overrides: dict = {}
+    restore_os_only = choice == RESTORE_OS_ONLY_MENU_CHOICE
     # Menu choices 0 (Full restore) and 1 (QC Only) require QC + Burn.
     # Choices 2 (Erase only), 3 (Capture only), and 4 (L2 Restore OS Only)
     # skip the QC test run so the operator isn't forced through 20 minutes of
@@ -9832,12 +9892,27 @@ def run(stdscr) -> int:
             if choice in (0, RESTORE_OS_ONLY_MENU_CHOICE):
                 # Restore paths: erase first, then restore from golden copy.
                 # Choice 0 includes QC/Burn; L2 Restore OS Only skips QC/Burn.
-                erase = phase3_secure_erase(stdscr, ident, cfg, tech, operator)
+                erase = phase3_secure_erase(
+                    stdscr,
+                    ident,
+                    cfg,
+                    tech,
+                    operator,
+                    suppress_app_submission=restore_os_only,
+                )
                 if erase:
                     phase3_results["erase"] = erase
                     erase_result = (erase or {}).get("result") or {}
                     if erase_result.get("ok") and erase_result.get("verified"):
-                        restore = phase3_restore(stdscr, ident, cfg, tech, cpu_info=cpu)
+                        restore = phase3_restore(
+                            stdscr,
+                            ident,
+                            cfg,
+                            tech,
+                            cpu_info=cpu,
+                            suppress_reporting=restore_os_only,
+                            reporting_suppressed_label="Restore OS Only",
+                        )
                         if restore:
                             phase3_results["restore"] = restore
                     else:
@@ -9879,6 +9954,11 @@ def run(stdscr) -> int:
     _apply_hardware_label_overrides(payload, hardware_label_overrides)
     payload["selected_option"] = choice + 1  # 1-indexed for human reading
     payload["selected_option_label"] = MENU_OPTIONS[choice]
+    if restore_os_only:
+        payload["test_type"] = "restore_os_only"
+        payload["report_source"] = "bench_restore_os_only"
+        payload["operation"] = "OS ONLY"
+        payload["selected_option_label"] = "OS ONLY"
     payload["session_started_at"] = datetime.now(timezone.utc).isoformat()
     payload["lock_audit"] = audit
     if qc_summary is not None:
@@ -9932,6 +10012,19 @@ def run(stdscr) -> int:
     elif audit["halted"] and l1_lock_continue:
         payload["test_type"] = "phase2a_l1_continue"
         payload["status"] = "mdm_warning_l1_continue"
+    elif restore_os_only:
+        erase_result = ((phase3_results.get("erase") or {}).get("result") or {})
+        restore_result = ((phase3_results.get("restore") or {}).get("result") or {})
+        payload["status"] = (
+            "completed"
+            if (
+                erase_result.get("ok")
+                and erase_result.get("verified")
+                and restore_result.get("ok")
+                and restore_result.get("verified")
+            )
+            else "failed"
+        )
     elif (qc_summary and qc_summary.get("failed") and tech == "L2") or \
          (burn_result and burn_result.get("result") == "FAIL" and tech == "L2"):
         # L2 QC or burn failure → backend will flip Status=L2_Rework
@@ -9951,9 +10044,15 @@ def run(stdscr) -> int:
     except OSError:
         pass
 
-    screen_submitting(stdscr)
-    ok, msg = post_ingest(payload, cfg, operator)
-    _attach_audit_submission_status(payload, ok, msg)
+    if restore_os_only:
+        screen_submitting(stdscr, "Saving Restore OS Only record to server data...")
+        msg = "Restore OS Only: VSTL app submission skipped"
+        _attach_local_only_submission_status(payload, msg)
+        ok = False
+    else:
+        screen_submitting(stdscr)
+        ok, msg = post_ingest(payload, cfg, operator)
+        _attach_audit_submission_status(payload, ok, msg)
     try:
         with open(LOCAL_AUDIT_FILE, "w") as f:
             json.dump(payload, f, indent=2)
@@ -9964,8 +10063,10 @@ def run(stdscr) -> int:
                       lock_audit=audit, qc_summary=qc_summary,
                       burn_result=burn_result,
                       local_report_ok=local_ok,
-                      local_report_msg=local_msg)
-    release_successful_audit_dhcp_lease(cfg, ok)
+                      local_report_msg=local_msg,
+                      app_submission_skipped=restore_os_only)
+    if not restore_os_only:
+        release_successful_audit_dhcp_lease(cfg, ok)
 
     return 0
 

@@ -479,6 +479,50 @@ def test_reports_are_newest_first_in_every_operation_sheet(tmp_path):
         ]
 
 
+def test_restore_os_only_exports_to_own_sheet_without_restore_or_erase_duplicates(tmp_path):
+    payload = _sample_payload()
+    payload.pop("qc_tests", None)
+    payload.pop("burn_test", None)
+    payload.update({
+        "serial_no": "OSONLY1",
+        "test_type": "restore_os_only",
+        "report_source": "bench_restore_os_only",
+        "operation": "OS ONLY",
+        "selected_option_label": "OS ONLY",
+        "audit_submission_status": "Server Data Only",
+        "phase3": {
+            "erase": {
+                "ok": True,
+                "verified": True,
+                "method": "NVMe_SANITIZE_CRYPTO_ERASE",
+                "duration_sec": 10,
+            },
+            "restore": {
+                "ok": True,
+                "verified": True,
+                "duration_sec": 90,
+                "image_name": "WIN11_OS_BACKUP",
+            },
+        },
+    })
+    data = tmp_path / "audits.jsonl"
+    data.write_text(
+        json.dumps({"received_at": "2026-06-14T10:00:00Z", "payload": payload}) + "\n",
+        encoding="utf-8",
+    )
+
+    rows = exporter.load_rows(data, "all")
+
+    assert rows[0]["Operation"] == "OS ONLY"
+    assert rows[0]["Audit Submission Status"] == "Server Data Only"
+    sheets = dict(exporter._xlsx_sheets(rows, "all"))
+    assert "OS ONLY" in sheets
+    assert [row["Serial Number"] for row in sheets["OS ONLY"]] == ["OSONLY1"]
+    assert sheets["Restore"] == []
+    assert sheets["Secure Erase"] == []
+    assert exporter._xlsx_sheets(rows, "os_only")[0][0] == "OS ONLY"
+
+
 def test_headers_use_ct_number_and_single_csv_field_order():
     assert "Battery CT Number" in exporter.HEADERS
     assert "Battery Product Number" not in exporter.HEADERS
@@ -518,6 +562,7 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert "Capture Elapsed Time (sec)" in exporter.HEADERS
     assert "CPU Fan Status" in exporter.HEADERS
     assert "CPU Fan Max RPM" in exporter.HEADERS
+    assert ("os only", "OS ONLY") in exporter.REPORT_SHEETS
     assert "Operation Elapsed Time (sec)" in exporter.CENTER_VALUE_HEADERS
     assert "CPU Fan Status" in exporter.CENTER_VALUE_HEADERS
     assert exporter.HEADERS.index("RAM Type") == exporter.HEADERS.index("Total RAM (GB)") + 1
@@ -634,6 +679,7 @@ def test_csv_bundle_matches_all_xlsx_operation_split(tmp_path):
             "qc.csv",
             "secure-erase.csv",
             "capture.csv",
+            "os-only.csv",
         ]
         assert "Windows 11 Pro" not in archive.read("restore.csv").decode("utf-8-sig")
         assert "Windows 11 Pro" in archive.read("qc.csv").decode("utf-8-sig")

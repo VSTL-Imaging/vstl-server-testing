@@ -116,9 +116,39 @@ def test_restore_approved_requires_verified_secure_erase_before_restore():
     assert 'phase3_results["erase"] = erase' in restore_branch
     assert 'erase_result = (erase or {}).get("result") or {}' in restore_branch
     assert 'erase_result.get("ok") and erase_result.get("verified")' in restore_branch
+    assert "suppress_app_submission=restore_os_only" in restore_branch
+    assert "suppress_reporting=restore_os_only" in restore_branch
+    assert 'reporting_suppressed_label="Restore OS Only"' in restore_branch
     assert "Restore cancelled because drive wipe did not complete." in restore_branch
     assert "choice in (0, RESTORE_OS_ONLY_MENU_CHOICE)" in TUI
     assert "needs_qc = choice in (0, 1)" in TUI
+
+
+def test_restore_os_only_saves_server_data_without_vstl_app_submission():
+    assert "def _attach_local_only_submission_status(" in TUI
+    assert 'status = "Server Data Only"' in TUI
+    assert 'payload["report_source"] = "bench_restore_os_only"' in TUI
+    assert 'payload["operation"] = "OS ONLY"' in TUI
+    assert 'payload["selected_option_label"] = "OS ONLY"' in TUI
+    assert "Restore OS Only: VSTL app submission skipped" in TUI
+    assert "if restore_os_only:" in TUI
+
+    submit_start = TUI.index("if restore_os_only:\n        screen_submitting")
+    submit_block = TUI[submit_start:TUI.index("return 0", submit_start)]
+    local_only_pos = submit_block.index("_attach_local_only_submission_status(payload, msg)")
+    local_report_pos = submit_block.index("local_ok, local_msg = post_local_report(payload, cfg)")
+    assert local_only_pos < local_report_pos
+    assert "post_ingest(payload, cfg, operator)" in submit_block
+    assert "else:" in submit_block
+    assert "app_submission_skipped=restore_os_only" in submit_block
+
+    secure_erase_flow = TUI[
+        TUI.index("def phase3_secure_erase("):
+        TUI.index("def phase3_capture(")
+    ]
+    assert "suppress_app_submission: bool = False" in secure_erase_flow
+    assert "Restore OS Only: VSTL app certificate submission skipped" in secure_erase_flow
+    assert "and not suppress_app_submission" in secure_erase_flow
 
 
 def test_l2_menu_has_restore_os_only_without_qc_or_box_selection():

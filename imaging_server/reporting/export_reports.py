@@ -89,6 +89,7 @@ REPORT_SHEETS = [
     ("qc", "QC"),
     ("secure erase", "Secure Erase"),
     ("capture", "Capture"),
+    ("os only", "OS ONLY"),
 ]
 
 REMOVED_CAPTURE_SECURE_ERASE_HEADERS = {
@@ -387,6 +388,12 @@ def _newest_first(rows: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def _operations(payload: dict) -> list[str]:
+    if (
+        _text(payload.get("test_type")).lower() == "restore_os_only"
+        or _text(payload.get("operation")).upper() == "OS ONLY"
+        or _text(payload.get("selected_option_label")).upper() == "OS ONLY"
+    ):
+        return ["OS ONLY"]
     phase3 = payload.get("phase3") or {}
     operations = []
     if payload.get("qc_tests"):
@@ -502,6 +509,7 @@ def _operation_elapsed_from_row(row: dict[str, str], sheet_name: str) -> str:
         "Restore": "Restore Elapsed Time (sec)",
         "Secure Erase": "Secure Erase Elapsed Time (sec)",
         "Capture": "Capture Elapsed Time (sec)",
+        "OS ONLY": "Restore Elapsed Time (sec)",
     }
     return _text(row.get(mapping.get(sheet_name, "")))
 

@@ -1089,7 +1089,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", required=True)
     parser.add_argument("--format", choices=("csv", "csv_zip", "xlsx"), required=True)
-    parser.add_argument("--type", choices=("all", "restore", "qc", "secure_erase", "capture"), default="all")
+    parser.add_argument(
+        "--type",
+        choices=("all", "restore", "qc", "secure_erase", "capture", "os_only"),
+        default="all",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     rows = load_rows(Path(args.data), args.type)

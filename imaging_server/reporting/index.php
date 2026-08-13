@@ -19,7 +19,7 @@ declare(strict_types=1);
 </head>
 <body>
   <h1>VSTL Bench Reports</h1>
-  <p>Download Restore, QC, Secure Erase, Capture, or combined audit records.</p>
+  <p>Download Restore, QC, Secure Erase, Capture, OS ONLY, or combined audit records.</p>
   <form method="post" action="download.php">
     <label class="wide">Report token
       <input type="password" name="token" required autocomplete="current-password">
@@ -31,6 +31,7 @@ declare(strict_types=1);
         <option value="qc">QC</option>
         <option value="secure_erase">Secure Erase</option>
         <option value="capture">Capture</option>
+        <option value="os_only">OS ONLY</option>
       </select>
     </label>
     <label>Format

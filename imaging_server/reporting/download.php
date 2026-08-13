@@ -15,7 +15,7 @@ $type = strtolower((string)($_POST['type'] ?? $_GET['type'] ?? 'all'));
 if (!in_array($format, ['csv', 'xlsx'], true)) {
     $format = 'xlsx';
 }
-if (!in_array($type, ['all', 'restore', 'qc', 'secure_erase', 'capture'], true)) {
+if (!in_array($type, ['all', 'restore', 'qc', 'secure_erase', 'capture', 'os_only'], true)) {
     $type = 'all';
 }
 $tmp = tempnam('/tmp', 'vstl-report-');

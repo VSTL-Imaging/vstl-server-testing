@@ -10,7 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPORTER_PATH = ROOT / "reporting" / "export_reports.py"
 IMPORTER_PATH = ROOT / "reporting" / "import_secure_erase_records.py"
 CAPTURE_IMPORTER_PATH = ROOT / "reporting" / "import_capture_records.py"
+EXPORTER_TEXT = EXPORTER_PATH.read_text(encoding="utf-8")
 INGEST_PHP = (ROOT / "reporting" / "ingest.php").read_text(encoding="utf-8")
+DOWNLOAD_PHP = (ROOT / "reporting" / "download.php").read_text(encoding="utf-8")
+INDEX_PHP = (ROOT / "reporting" / "index.php").read_text(encoding="utf-8")
 
 
 def _load_module(name: str, path: Path):
@@ -563,6 +566,9 @@ def test_headers_use_ct_number_and_single_csv_field_order():
     assert "CPU Fan Status" in exporter.HEADERS
     assert "CPU Fan Max RPM" in exporter.HEADERS
     assert ("os only", "OS ONLY") in exporter.REPORT_SHEETS
+    assert '"os_only"' in EXPORTER_TEXT
+    assert "'os_only'" in DOWNLOAD_PHP
+    assert '<option value="os_only">OS ONLY</option>' in INDEX_PHP
     assert "Operation Elapsed Time (sec)" in exporter.CENTER_VALUE_HEADERS
     assert "CPU Fan Status" in exporter.CENTER_VALUE_HEADERS
     assert exporter.HEADERS.index("RAM Type") == exporter.HEADERS.index("Total RAM (GB)") + 1

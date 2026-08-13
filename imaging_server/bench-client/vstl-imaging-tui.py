@@ -1912,13 +1912,21 @@ MENU_OPTIONS = [
     "QC Test Only  (Certified Secure Erase optional)",
     "Certified Secure Erase",
     "Capture Full System Image",
+    "Restore OS Only  (Certified Secure Erase + Restore, no QC)",
 ]
+RESTORE_OS_ONLY_MENU_CHOICE = 4
 AUTO_SELECT_SECS = 5
 BOX_REQUIRED_MENU_CHOICES = {0, 1, 2}
 
 
 def _visible_menu_options(operator: dict | None) -> list[tuple[int, str]]:
     options = list(enumerate(MENU_OPTIONS))
+    if _operator_technician_level(operator) != "L2":
+        options = [
+            (idx, label)
+            for idx, label in options
+            if idx != RESTORE_OS_ONLY_MENU_CHOICE
+        ]
     if not _operator_technician_level(operator):
         options = [(idx, label) for idx, label in options if idx in (2, 3)]
     if not _operator_has_capture_access(operator):
@@ -1931,7 +1939,7 @@ def _menu_choice_requires_l1_box(choice: int | None) -> bool:
 
 
 def screen_main_menu(stdscr, technician: str, operator: dict | None = None) -> int:
-    """Returns 0..3 for the selected process.
+    """Returns the selected process index from MENU_OPTIONS.
 
     Per spec 1.3: countdown is regardless of technician level.
     Per spec 1.4: ENTER confirms highlighted; if none, defaults to Option 1.
@@ -9767,14 +9775,18 @@ def run(stdscr) -> int:
     post_qc_details: dict | None = None
     hardware_label_overrides: dict = {}
     # Menu choices 0 (Full restore) and 1 (QC Only) require QC + Burn.
-    # Choices 2 (Erase only) and 3 (Capture only) skip the QC test run so
-    # the operator isn't forced through 20 minutes of QC for a 90-second
-    # NVMe sanitize or a 60-minute capture from a known-good unit.
+    # Choices 2 (Erase only), 3 (Capture only), and 4 (L2 Restore OS Only)
+    # skip the QC test run so the operator isn't forced through 20 minutes of
+    # QC for a 90-second NVMe sanitize, a restore-only reimage, or a 60-minute
+    # capture from a known-good unit.
     needs_qc = choice in (0, 1)
     if (not audit["halted"]) or override_info or l1_lock_continue:
         ident = hw.detect_identity()
         cpu = hw.detect_cpu()
-        if choice == 0 and not _restore_backup_available(stdscr, ident, cfg, cpu):
+        if (
+            choice in (0, RESTORE_OS_ONLY_MENU_CHOICE)
+            and not _restore_backup_available(stdscr, ident, cfg, cpu)
+        ):
             return 0
         gpu = hw.detect_gpu()
         ram = hw.detect_ram()
@@ -9817,8 +9829,9 @@ def run(stdscr) -> int:
                 and tech == "L2")
         )
         if not _l2_rework:
-            if choice == 0:
-                # Restore Approved: erase first, then restore from golden copy
+            if choice in (0, RESTORE_OS_ONLY_MENU_CHOICE):
+                # Restore paths: erase first, then restore from golden copy.
+                # Choice 0 includes QC/Burn; L2 Restore OS Only skips QC/Burn.
                 erase = phase3_secure_erase(stdscr, ident, cfg, tech, operator)
                 if erase:
                     phase3_results["erase"] = erase

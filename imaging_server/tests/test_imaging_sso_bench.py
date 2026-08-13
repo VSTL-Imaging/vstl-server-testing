@@ -109,13 +109,47 @@ def test_hidden_testing_mode_processes_bypass_reporting_login_and_box_flow():
 
 def test_restore_approved_requires_verified_secure_erase_before_restore():
     restore_branch = TUI[
-        TUI.index("if choice == 0:"):
+        TUI.index("if choice in (0, RESTORE_OS_ONLY_MENU_CHOICE):"):
         TUI.index("elif choice == 1:")
     ]
+    assert "Choice 0 includes QC/Burn; L2 Restore OS Only skips QC/Burn." in restore_branch
     assert 'phase3_results["erase"] = erase' in restore_branch
     assert 'erase_result = (erase or {}).get("result") or {}' in restore_branch
     assert 'erase_result.get("ok") and erase_result.get("verified")' in restore_branch
     assert "Restore cancelled because drive wipe did not complete." in restore_branch
+    assert "choice in (0, RESTORE_OS_ONLY_MENU_CHOICE)" in TUI
+    assert "needs_qc = choice in (0, 1)" in TUI
+
+
+def test_l2_menu_has_restore_os_only_without_qc_or_box_selection():
+    assert '"Restore OS Only  (Certified Secure Erase + Restore, no QC)"' in TUI
+    assert "RESTORE_OS_ONLY_MENU_CHOICE = 4" in TUI
+    assert "if idx != RESTORE_OS_ONLY_MENU_CHOICE" in TUI
+    assert "BOX_REQUIRED_MENU_CHOICES = {0, 1, 2}" in TUI
+
+    ns = load_tui_functions(
+        "_operator_user",
+        "_operator_roles",
+        "_truthy_operator_value",
+        "_operator_has_capture_access",
+        "_normalize_layer",
+        "_operator_layer",
+        "_operator_technician_level",
+        "_visible_menu_options",
+    )
+    ns["MENU_OPTIONS"] = [
+        "Restore Approved System Image  (with QC Test and Certified Secure Erase)",
+        "QC Test Only  (Certified Secure Erase optional)",
+        "Certified Secure Erase",
+        "Capture Full System Image",
+        "Restore OS Only  (Certified Secure Erase + Restore, no QC)",
+    ]
+    ns["RESTORE_OS_ONLY_MENU_CHOICE"] = 4
+
+    l1_operator = {"selected_layer": "Layer 1", "user": {"roles": ["Layer 1"], "can_capture": False}}
+    l2_operator = {"selected_layer": "Layer 2", "user": {"roles": ["Layer 2"], "can_capture": False}}
+    assert [idx for idx, _label in ns["_visible_menu_options"](l1_operator)] == [0, 1, 2]
+    assert [idx for idx, _label in ns["_visible_menu_options"](l2_operator)] == [0, 1, 2, 4]
 
 
 def test_capture_option_uses_backend_can_capture_flag_on_bench_menu():
@@ -156,7 +190,9 @@ def test_imaging_only_operator_skips_layer_and_only_sees_phase3_actions():
         "QC Test Only  (Certified Secure Erase optional)",
         "Certified Secure Erase",
         "Capture Full System Image",
+        "Restore OS Only  (Certified Secure Erase + Restore, no QC)",
     ]
+    ns["RESTORE_OS_ONLY_MENU_CHOICE"] = 4
     imaging_operator = {"user": {"name": "Image Operator", "roles": ["Imaging"], "layer": None, "can_capture": True}}
     assert ns["_operator_technician_level"](imaging_operator) == ""
     assert ns["_operator_has_layer_access"](imaging_operator) is False

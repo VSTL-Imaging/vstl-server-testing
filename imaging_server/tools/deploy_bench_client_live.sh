@@ -27,8 +27,8 @@ ROOTFS_VSTL="$ROOTFS_DIR/opt/vstl"
 BUILD_SQUASHFS="$INSTALL_ROOT/build/cz/extract/live/filesystem.squashfs"
 PXE_SQUASHFS="$PXE_ROOT/filesystem.squashfs"
 
-GIT_SHA="$(git -C "$SRC_ROOT" rev-parse --short=12 HEAD 2>/dev/null || true)"
-GIT_BRANCH="$(git -C "$SRC_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+GIT_SHA="${VSTL_BUILD_GIT_SHA:-$(git -C "$SRC_ROOT" rev-parse --short=12 HEAD 2>/dev/null || true)}"
+GIT_BRANCH="${VSTL_BUILD_GIT_BRANCH:-$(git -C "$SRC_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
 SERVER_ROLE="${VSTL_SERVER_ROLE:-}"
 if [[ -z "$SERVER_ROLE" ]]; then
   case "$INSTALL_ROOT" in

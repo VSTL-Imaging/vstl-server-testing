@@ -61,7 +61,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v8"
+RESTORE_CLIENT_BUILD = "restore-track-v9"
 
 
 def _now_iso() -> str:
@@ -156,12 +156,12 @@ def _timestamp_value(value: object) -> float:
 
 
 def _copy_recency_key(copy: dict) -> tuple[float, str]:
-    ts = max(
+    metadata_ts = max(
         _timestamp_value(copy.get("captured_at")),
         _timestamp_value(copy.get("updated_at")),
         _timestamp_value(copy.get("created_at")),
-        _timestamp_value(copy.get("image_mtime")),
     )
+    ts = metadata_ts or _timestamp_value(copy.get("image_mtime"))
     return (ts, _norm_match(copy.get("image_subdir") or copy.get("image_name") or ""))
 
 
@@ -405,17 +405,36 @@ def _should_continue_after_partclone(line: str, state: dict) -> bool:
     return (state.get("last_line") or "").startswith(f"Finished {current};")
 
 
-def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
-                      progress_callback: Optional[Callable[[dict], None]] = None,
-                      timeout: int = 4 * 3600) -> tuple[bool, str]:
-    """Run Clonezilla ``ocs-sr restoredisk`` and stream partclone progress."""
+def _restore_failure_should_retry_without_precreate(evidence: str) -> bool:
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", evidence or "").lower()
+    broken_markers = (
+        "image of this partition is broken",
+        "partition image is broken",
+        "image is broken",
+        "is broken:",
+    )
+    return any(marker in text for marker in broken_markers)
+
+
+def _ocs_restoredisk_once(
+    image_subdir: str,
+    device: str,
+    image_dir: str = "",
+    progress_callback: Optional[Callable[[dict], None]] = None,
+    timeout: int = 4 * 3600,
+    allow_precreate: bool = True,
+) -> tuple[bool, str, bool]:
+    """Run one Clonezilla ``ocs-sr restoredisk`` attempt and stream progress."""
     dev_name = os.path.basename(device)
     image_dir = image_dir or os.path.join(_NFS_MOUNT_POINT, image_subdir)
-    prep_ok, precreated_layout, prep_ev = _prepare_target_windows_gpt_from_image(
-        image_dir, device, progress_callback
-    )
+    if allow_precreate and (os.environ.get("VSTL_RESTORE_PRECREATE_LAYOUT", "1").strip().lower() not in {"0", "false", "no", "off"}):
+        prep_ok, precreated_layout, prep_ev = _prepare_target_windows_gpt_from_image(
+            image_dir, device, progress_callback
+        )
+    else:
+        prep_ok, precreated_layout, prep_ev = True, False, "precreate skipped: using Clonezilla partition table"
     if not prep_ok:
-        return False, prep_ev
+        return False, prep_ev, precreated_layout
     partition_mode = "-k" if precreated_layout else "-k1"
     cmd = [
         "ocs-sr", "-batch", "--nogui", "-or", _NFS_MOUNT_POINT,
@@ -458,9 +477,9 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
             env=env,
         )
     except FileNotFoundError:
-        return False, "ocs-sr: not found (is Clonezilla Live booted?)"
+        return False, "ocs-sr: not found (is Clonezilla Live booted?)", precreated_layout
     except OSError as e:
-        return False, f"OSError: {e}"
+        return False, f"OSError: {e}", precreated_layout
 
     buffer = ""
     last_emit = 0.0
@@ -527,7 +546,48 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
         "\n".join(evidence_lines)[-_EVIDENCE_CAP:] +
         f"\nrc={rc_value}\nelapsed_sec={elapsed}"
     )
-    return rc_value == 0, ev
+    return rc_value == 0, ev, precreated_layout
+
+
+def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
+                      progress_callback: Optional[Callable[[dict], None]] = None,
+                      timeout: int = 4 * 3600) -> tuple[bool, str]:
+    """Run Clonezilla ``ocs-sr restoredisk`` with one safe layout retry.
+
+    Some Clonezilla/partclone runs report a valid split image as "broken" when
+    we precreate a target-sized GPT first. If that happens, retry once with
+    Clonezilla recreating the partition table from the image, then the normal
+    post-restore expansion step will still grow the Windows layout as needed.
+    """
+    ok, evidence, precreated_layout = _ocs_restoredisk_once(
+        image_subdir,
+        device,
+        image_dir=image_dir,
+        progress_callback=progress_callback,
+        timeout=timeout,
+        allow_precreate=True,
+    )
+    if ok or not precreated_layout or not _restore_failure_should_retry_without_precreate(evidence):
+        return ok, evidence
+
+    _emit_restore_stage(
+        progress_callback,
+        "Clonezilla reported a broken partition image; retrying with image partition table",
+    )
+    retry_prep: list[str] = ["--- retry without precreated layout ---"]
+    for cmd in (["sgdisk", "--zap-all", device], ["partprobe", device], ["udevadm", "settle"]):
+        rc, out, err = _run(cmd, timeout=60)
+        retry_prep.append(f"$ {' '.join(cmd)} rc={rc} {out[:200]} {err[:300]}")
+
+    retry_ok, retry_ev, _retry_precreated = _ocs_restoredisk_once(
+        image_subdir,
+        device,
+        image_dir=image_dir,
+        progress_callback=progress_callback,
+        timeout=timeout,
+        allow_precreate=False,
+    )
+    return retry_ok, "\n".join([evidence, *retry_prep, retry_ev])[-_EVIDENCE_CAP:]
 
 
 def _restore_failure_summary(evidence: str) -> str:

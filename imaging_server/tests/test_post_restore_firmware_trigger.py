@@ -144,6 +144,59 @@ unit: sectors
     assert "not GPT" in evidence
 
 
+def test_restore_retries_without_precreate_when_precreated_layout_reports_broken_image(monkeypatch):
+    attempts = []
+    commands = []
+    events = []
+
+    def fake_once(*args, **kwargs):
+        allow_precreate = kwargs.get("allow_precreate", True)
+        attempts.append(allow_precreate)
+        if allow_precreate:
+            return (
+                False,
+                "precreated target GPT\nThe image of this partition is broken: nvme0n1p3\nrc=1",
+                True,
+            )
+        return True, "retry restore ok", False
+
+    def fake_run(argv, timeout=30):
+        commands.append(argv)
+        return 0, "", ""
+
+    monkeypatch.setattr(ir, "_ocs_restoredisk_once", fake_once)
+    monkeypatch.setattr(ir, "_run", fake_run)
+
+    ok, evidence = ir._ocs_restoredisk(
+        "image", "/dev/nvme0n1", image_dir="/home/partimag/image", progress_callback=events.append,
+    )
+
+    assert ok is True
+    assert attempts == [True, False]
+    assert ["sgdisk", "--zap-all", "/dev/nvme0n1"] in commands
+    assert "retry without precreated layout" in evidence
+    assert "retry restore ok" in evidence
+    assert any("retrying with image partition table" in event.get("last_line", "") for event in events)
+
+
+def test_restore_does_not_retry_generic_precreated_layout_failure(monkeypatch):
+    attempts = []
+
+    def fake_once(*args, **kwargs):
+        attempts.append(kwargs.get("allow_precreate", True))
+        return False, "precreate ok\nnetwork unreachable\nrc=1", True
+
+    monkeypatch.setattr(ir, "_ocs_restoredisk_once", fake_once)
+
+    ok, evidence = ir._ocs_restoredisk(
+        "image", "/dev/nvme0n1", image_dir="/home/partimag/image",
+    )
+
+    assert ok is False
+    assert attempts == [True]
+    assert "network unreachable" in evidence
+
+
 def test_restore_verification_fails_on_large_trailing_unallocated_space(monkeypatch):
     calls = []
 

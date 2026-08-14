@@ -63,6 +63,10 @@ def test_hidden_testing_mode_processes_bypass_reporting_login_and_box_flow():
     assert "_testing_modifier_chord_active(require_trigger_key=True)" in TUI
     assert "ch = _getch_with_testing_mode(stdscr)" in TUI
     assert "def screen_testing_mode_menu(" in TUI
+    assert "def screen_testing_restore_os_selection_mode(" in TUI
+    assert "def screen_testing_restore_manual_picker(" in TUI
+    assert "Auto OS Selection" in TUI
+    assert "Manual OS Selection" in TUI
     assert '(TESTING_RESTORE_ONLY_CHOICE, "5", TESTING_RESTORE_ONLY_LABEL)' in TUI
     assert '(TESTING_QC_ONLY_CHOICE, "6", TESTING_QC_ONLY_LABEL)' in TUI
     assert '(TESTING_SECURE_ERASE_CHOICE, "7", TESTING_SECURE_ERASE_LABEL)' in TUI
@@ -85,6 +89,10 @@ def test_hidden_testing_mode_processes_bypass_reporting_login_and_box_flow():
     assert "LOCAL_AUDIT_FILE" not in testing_flow
     assert "phase3_secure_erase(" in testing_flow
     assert "phase3_restore(" in testing_flow
+    assert "selection_mode = screen_testing_restore_os_selection_mode(stdscr)" in testing_flow
+    assert "ir.list_local_original_golden_copies(" in testing_flow
+    assert "selected_golden_copy=selected_golden_copy" in testing_flow
+    assert "selected_golden_copy: dict | None = None" in testing_flow
     assert "_run_qc_and_burn_flow(stdscr, cfg, tech)" in testing_flow
     assert "suppress_reporting=True" in testing_flow
 
@@ -103,6 +111,8 @@ def test_hidden_testing_mode_processes_bypass_reporting_login_and_box_flow():
     ]
     assert "suppress_reporting: bool = False" in restore_flow
     assert "if suppress_reporting:" in restore_flow
+    assert "selected_golden_copy: Optional[dict] = None" in restore_flow
+    assert "manual_selection = bool(selected_golden_copy)" in restore_flow
     assert '"/imaging/restore/complete"' in restore_flow
     assert "log_suppressed" in restore_flow
 

@@ -88,6 +88,55 @@ def test_restore_latest_copy_falls_back_to_directory_mtime(tmp_path, monkeypatch
     assert result["golden_copy"]["image_name"] == "NEWER_NO_TIME.img"
 
 
+def test_manual_restore_lists_only_original_backups_newest_first(tmp_path, monkeypatch):
+    older = tmp_path / "HP_ELITEBOOK_ORIGINAL_WIN11_23H2"
+    newer = tmp_path / "DELL_LATITUDE_ORIGINAL_WIN11_25H2"
+    renamed_suffix = tmp_path / "DELL_LATITUDE_ORIGINAL_WIN11_25H2_2"
+    renamed_parentheses = tmp_path / "HP_ELITEBOOK_ORIGINAL_WIN11_23H2 (2)"
+    renamed_copy = tmp_path / "HP_ELITEBOOK_ORIGINAL_WIN11_23H2 - Copy"
+    rotated_old = tmp_path / "DELL_LATITUDE_ORIGINAL_WIN11_25H2_old"
+    hidden = tmp_path / ".vstl-secure-erase"
+    postinit = tmp_path / "postinitscripts"
+
+    _write_restore_metadata(
+        older,
+        image_name="OLDER_ORIGINAL.img",
+        captured_at="2026-07-11T11:27:08+00:00",
+    )
+    _write_restore_metadata(
+        newer,
+        image_name="NEWER_ORIGINAL.img",
+        captured_at="2026-08-12T06:43:22+00:00",
+    )
+    for path in (renamed_suffix, renamed_parentheses, renamed_copy, rotated_old, hidden, postinit):
+        _write_restore_metadata(path, image_name=f"{path.name}.img")
+
+    monkeypatch.setattr(restore, "_NFS_MOUNT_POINT", str(tmp_path))
+    monkeypatch.setattr(restore, "mount_nfs", lambda *args: (True, "mounted"))
+
+    result = restore.list_local_original_golden_copies(
+        "server", "/images/dev", "rw",
+    )
+
+    assert result["status"] == "found"
+    assert [copy["image_name"] for copy in result["copies"]] == [
+        "NEWER_ORIGINAL.img",
+        "OLDER_ORIGINAL.img",
+    ]
+    assert result["copies"][0]["captured_at"] == "2026-08-12T06:43:22+00:00"
+    assert all(copy["manual_original"] for copy in result["copies"])
+
+
+def test_original_restore_backup_name_filter_allows_os_tokens_with_digits():
+    assert restore.is_original_restore_backup_name("DELL_LATITUDE_WIN_11_PRO_25H2")
+    assert not restore.is_original_restore_backup_name("DELL_LATITUDE_WIN_11_PRO_25H2_2")
+    assert not restore.is_original_restore_backup_name("DELL_LATITUDE_WIN_11_PRO_25H2-2")
+    assert not restore.is_original_restore_backup_name("DELL_LATITUDE_WIN_11_PRO_25H2 (2)")
+    assert not restore.is_original_restore_backup_name("DELL_LATITUDE_WIN_11_PRO_25H2 - Copy")
+    assert not restore.is_original_restore_backup_name("DELL_LATITUDE_WIN_11_PRO_25H2_old")
+    assert not restore.is_original_restore_backup_name(".vstl-secure-erase")
+
+
 def test_partclone_program_terminated_line_is_not_treated_as_interruption():
     state = {
         "operation": "restoring",

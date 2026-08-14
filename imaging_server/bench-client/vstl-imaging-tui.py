@@ -8459,6 +8459,118 @@ def screen_restore_picker(stdscr, copies: list[dict]) -> Optional[dict]:
         elif ch == 27:
             return None
 
+
+def _restore_copy_uploaded_label(copy: dict) -> str:
+    for key in ("captured_at", "created_at", "updated_at", "image_mtime"):
+        raw = str(copy.get(key) or "").strip()
+        if not raw:
+            continue
+        text = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+        try:
+            stamp = datetime.fromisoformat(text)
+            return stamp.strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            return raw[:16]
+    return "--"
+
+
+def screen_testing_restore_os_selection_mode(stdscr) -> str:
+    options = [
+        ("auto", "Auto OS Selection", "Use SKU first, then exact model + CPU fallback"),
+        ("manual", "Manual OS Selection", "Pick from all original uploaded backups"),
+    ]
+    selected = 0
+    while True:
+        stdscr.erase()
+        draw_header(stdscr, "Testing Mode - Restore Only OS")
+        h, w = stdscr.getmaxyx()
+        center_block(stdscr, [
+            ("Select restore OS source", curses.A_BOLD),
+            ("", 0),
+        ], top_offset=3)
+        start_y = 7
+        for i, (_mode, label, detail) in enumerate(options):
+            text = f"{label:<24} {detail}"
+            _draw_selectable_row(stdscr, start_y + i, 4, text[: w - 10], i == selected)
+        draw_footer(stdscr, "ENTER select   ESC cancel")
+        stdscr.refresh()
+        ch = stdscr.getch()
+        if ch in (curses.KEY_UP, ord("k")):
+            selected = (selected - 1) % len(options)
+        elif ch in (curses.KEY_DOWN, ord("j")):
+            selected = (selected + 1) % len(options)
+        elif ch in (10, 13, curses.KEY_ENTER):
+            return options[selected][0]
+        elif ch == 27:
+            return "cancel"
+
+
+def screen_testing_restore_manual_picker(stdscr, copies: list[dict]) -> Optional[dict]:
+    if not copies:
+        stdscr.erase()
+        draw_header(stdscr, "Testing Mode - Manual OS Selection")
+        center_block(stdscr, [
+            ("No original backups found.", curses.A_BOLD | curses.color_pair(RED_PAIR)),
+            ("", 0),
+            ("Renamed/duplicate folders like _2, -2, (2), copy, and _old are hidden.",
+             curses.color_pair(DIM_PAIR)),
+        ], top_offset=4)
+        draw_footer(stdscr, "ENTER continue")
+        stdscr.refresh()
+        while True:
+            ch = stdscr.getch()
+            if ch in (10, 13, curses.KEY_ENTER, 27):
+                return None
+
+    selected = 0
+    top = 0
+    while True:
+        stdscr.erase()
+        draw_header(stdscr, "Testing Mode - Manual OS Selection")
+        h, w = stdscr.getmaxyx()
+        visible = max(1, h - 8)
+        if selected < top:
+            top = selected
+        elif selected >= top + visible:
+            top = selected - visible + 1
+
+        _safe_addstr(
+            stdscr,
+            2,
+            2,
+            "Original backups only. Use arrows/PageUp/PageDown, ENTER to restore, ESC to cancel",
+            curses.color_pair(DIM_PAIR),
+        )
+        header = f"{'#':>3}  {'Uploaded':<16}  {'OS':<28} {'Size':>8}  Image"
+        _safe_addstr(stdscr, 4, 2, header[: w - 4], curses.A_BOLD | curses.color_pair(CYAN_PAIR))
+        for row, idx in enumerate(range(top, min(len(copies), top + visible))):
+            c = copies[idx]
+            y = 5 + row
+            os_text = _os_display(c.get("os_name", ""), c.get("os_version", ""), c.get("os_build", ""))
+            size = str(c.get("image_size_gb", "?"))
+            image = str(c.get("image_name") or c.get("image_subdir") or "")
+            text = (
+                f"{idx + 1:>3}  {_restore_copy_uploaded_label(c):<16}  "
+                f"{os_text:<28} {size:>8}  {image}"
+            )
+            _draw_selectable_row(stdscr, y, 2, text[: w - 6], idx == selected)
+        draw_footer(stdscr, f"ENTER select   ESC cancel   {selected + 1}/{len(copies)}")
+        stdscr.refresh()
+        ch = stdscr.getch()
+        if ch in (curses.KEY_UP, ord("k")):
+            selected = (selected - 1) % len(copies)
+        elif ch in (curses.KEY_DOWN, ord("j")):
+            selected = (selected + 1) % len(copies)
+        elif ch == curses.KEY_NPAGE:
+            selected = min(len(copies) - 1, selected + visible)
+        elif ch == curses.KEY_PPAGE:
+            selected = max(0, selected - visible)
+        elif ch in (10, 13, curses.KEY_ENTER):
+            return copies[selected]
+        elif ch == 27:
+            return None
+
+
 def screen_restore_model_cpu_fallback(stdscr, golden_copy: dict) -> bool:
     while True:
         stdscr.erase()
@@ -9138,7 +9250,8 @@ def phase3_capture(stdscr, ident: dict, cfg: dict,
 def phase3_restore(stdscr, ident: dict, cfg: dict,
                     tech: str, cpu_info: Optional[dict] = None,
                     suppress_reporting: bool = False,
-                    reporting_suppressed_label: str = "Testing mode") -> Optional[dict]:
+                    reporting_suppressed_label: str = "Testing mode",
+                    selected_golden_copy: Optional[dict] = None) -> Optional[dict]:
     """Run the full Phase-3 Restore sub-flow:
        lookup golden copy -> mount NFS -> restore -> POST result.
     The Server Process lookup order is exact SKU/Unit Part Number first,
@@ -9151,28 +9264,32 @@ def phase3_restore(stdscr, ident: dict, cfg: dict,
                       color=RED_PAIR, secs=4)
         return None
 
-    local_lookup = ir.find_local_golden_copies(
-        nfs_settings.get("nfs_host", ""),
-        nfs_settings.get("nfs_share", ""),
-        nfs_settings.get("mount_options", "rw,nolock,vers=3"),
-        ident.get("model", ""),
-        ident.get("sku", ""),
-        (cpu_info or {}).get("cpu", ""),
-    )
-    if local_lookup.get("status") != "found":
-        ir.umount_nfs()
-        _show_message(stdscr,
-                      local_lookup.get("error") or "Backup for this system is not found.",
-                      color=RED_PAIR, secs=4)
-        screen_restore_picker(stdscr, [])
-        return None
+    manual_selection = bool(selected_golden_copy)
+    if manual_selection:
+        golden_copy = dict(selected_golden_copy or {})
+    else:
+        local_lookup = ir.find_local_golden_copies(
+            nfs_settings.get("nfs_host", ""),
+            nfs_settings.get("nfs_share", ""),
+            nfs_settings.get("mount_options", "rw,nolock,vers=3"),
+            ident.get("model", ""),
+            ident.get("sku", ""),
+            (cpu_info or {}).get("cpu", ""),
+        )
+        if local_lookup.get("status") != "found":
+            ir.umount_nfs()
+            _show_message(stdscr,
+                          local_lookup.get("error") or "Backup for this system is not found.",
+                          color=RED_PAIR, secs=4)
+            screen_restore_picker(stdscr, [])
+            return None
 
-    copies = local_lookup.get("copies") or []
-    golden_copy = screen_restore_picker(stdscr, copies)
-    if not golden_copy:
-        ir.umount_nfs()
-        return None
-    if golden_copy.get("match_type") == "model_cpu":
+        copies = local_lookup.get("copies") or []
+        golden_copy = screen_restore_picker(stdscr, copies)
+        if not golden_copy:
+            ir.umount_nfs()
+            return None
+    if not manual_selection and golden_copy.get("match_type") == "model_cpu":
         if not screen_restore_model_cpu_fallback(stdscr, golden_copy):
             ir.umount_nfs()
             return None
@@ -9597,7 +9714,34 @@ def run_testing_restore_only(stdscr, cfg: dict) -> str:
 
     ident = hw.detect_identity()
     cpu = hw.detect_cpu()
-    if not _restore_backup_available(stdscr, ident, cfg, cpu):
+    selection_mode = screen_testing_restore_os_selection_mode(stdscr)
+    if selection_mode == "cancel":
+        return screen_testing_restore_completion(stdscr, ident, None, None)
+
+    selected_golden_copy: dict | None = None
+    if selection_mode == "manual":
+        nfs_settings = _get_bench_nfs_settings(cfg)
+        lookup = ir.list_local_original_golden_copies(
+            nfs_settings.get("nfs_host", ""),
+            nfs_settings.get("nfs_share", ""),
+            nfs_settings.get("mount_options", "rw,nolock,vers=3"),
+        )
+        ir.umount_nfs()
+        if lookup.get("status") != "found":
+            _show_message(
+                stdscr,
+                lookup.get("error") or "No original backups found.",
+                color=RED_PAIR,
+                secs=4,
+            )
+            selected_golden_copy = screen_testing_restore_manual_picker(stdscr, [])
+        else:
+            selected_golden_copy = screen_testing_restore_manual_picker(
+                stdscr, lookup.get("copies") or []
+            )
+        if not selected_golden_copy:
+            return screen_testing_restore_completion(stdscr, ident, None, None)
+    elif not _restore_backup_available(stdscr, ident, cfg, cpu):
         return screen_testing_restore_completion(stdscr, ident, None, None)
 
     erase = phase3_secure_erase(
@@ -9625,6 +9769,7 @@ def run_testing_restore_only(stdscr, cfg: dict) -> str:
         tech,
         cpu_info=cpu,
         suppress_reporting=True,
+        selected_golden_copy=selected_golden_copy,
     )
     restore_result = (restore or {}).get("result") or {}
     return screen_testing_restore_completion(stdscr, ident, erase_result, restore_result)

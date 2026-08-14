@@ -201,6 +201,22 @@ def newest_restore_copy(copies: list[dict]) -> dict:
     return max(copies, key=_copy_recency_key) if copies else {}
 
 
+_RENAMED_BACKUP_SUFFIX_RE = re.compile(
+    r"(?:\s+\([2-9]\d*\)|[_\-\s]+[2-9]\d*|(?:\s+-\s+|[_\-\s]+)copy)$",
+    re.IGNORECASE,
+)
+
+
+def is_original_restore_backup_name(name: str) -> bool:
+    """Return False for rotated or manually duplicated image directories."""
+    text = str(name or "").strip()
+    if not text or text.startswith(".") or text in {"postinitscripts"}:
+        return False
+    if text.endswith("_old"):
+        return False
+    return not _RENAMED_BACKUP_SUFFIX_RE.search(text)
+
+
 def _copy_from_metadata(image_dir: str, meta: dict, match_type: str) -> dict:
     image_subdir = os.path.basename(image_dir.rstrip("/"))
     image_name = meta.get("image_name") or image_subdir
@@ -294,6 +310,56 @@ def find_local_golden_copies(
             "evidence": mount_ev,
         }
     return {"status": "not_found", "error": "Device Backup not found.", "evidence": mount_ev}
+
+
+def list_local_original_golden_copies(
+    nfs_host: str,
+    nfs_share: str,
+    mount_options: str,
+) -> dict:
+    """List operator-pickable original image backups from the NFS share."""
+    ok_m, mount_ev = mount_nfs(nfs_host, nfs_share, mount_options)
+    if not ok_m:
+        return {"status": "error", "error": mount_ev, "evidence": mount_ev, "copies": []}
+
+    copies: list[dict] = []
+    try:
+        for name in sorted(os.listdir(_NFS_MOUNT_POINT)):
+            if not is_original_restore_backup_name(name):
+                continue
+            image_dir = os.path.join(_NFS_MOUNT_POINT, name)
+            if not os.path.isdir(image_dir):
+                continue
+            meta_path = os.path.join(image_dir, _CAPTURE_META_FILE)
+            meta: dict = {}
+            if os.path.isfile(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f) or {}
+                except (OSError, json.JSONDecodeError):
+                    meta = {}
+            if not meta:
+                meta = {"image_name": name, "image_subdir": name}
+            copy = _copy_from_metadata(image_dir, meta, "manual")
+            copy["manual_original"] = True
+            copies.append(copy)
+    except OSError as e:
+        return {
+            "status": "error",
+            "error": f"NFS scan failed: {e}",
+            "evidence": mount_ev,
+            "copies": [],
+        }
+
+    copies = sorted(copies, key=_copy_recency_key, reverse=True)
+    if not copies:
+        return {
+            "status": "not_found",
+            "error": "No original backups found.",
+            "evidence": mount_ev,
+            "copies": [],
+        }
+    return {"status": "found", "copies": copies, "evidence": mount_ev}
 
 
 def find_local_golden_copy(

@@ -10,6 +10,9 @@ PXE_ROOT="${PXE_ROOT:-/var/www/html/vstl-pxe}"
 IMAGES_DIR="${IMAGES_DIR:-/images/dev}"
 BACKUP_ROOT="${BACKUP_ROOT:-/opt/vstl-backups}"
 BACKUP_DIR="$BACKUP_ROOT/bench-client-deploy-$TS"
+BUILD_INFO_JSON="$BACKUP_DIR/vstl_build_info.json"
+BUILD_INFO_CURRENT="$BACKUP_ROOT/vstl-build-current.json"
+BUILD_HISTORY_JSONL="$BACKUP_ROOT/build-version-history.jsonl"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -23,6 +26,57 @@ fi
 ROOTFS_VSTL="$ROOTFS_DIR/opt/vstl"
 BUILD_SQUASHFS="$INSTALL_ROOT/build/cz/extract/live/filesystem.squashfs"
 PXE_SQUASHFS="$PXE_ROOT/filesystem.squashfs"
+
+GIT_SHA="$(git -C "$SRC_ROOT" rev-parse --short=12 HEAD 2>/dev/null || true)"
+GIT_BRANCH="$(git -C "$SRC_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+SERVER_ROLE="${VSTL_SERVER_ROLE:-}"
+if [[ -z "$SERVER_ROLE" ]]; then
+  case "$INSTALL_ROOT" in
+    *phase1*|*testing*) SERVER_ROLE="testing" ;;
+    *) SERVER_ROLE="main" ;;
+  esac
+fi
+SERVER_ROLE_SLUG="$(printf '%s' "$SERVER_ROLE" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+SERVER_ROLE_SLUG="${SERVER_ROLE_SLUG:-server}"
+BUILD_DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+BUILD_VERSION="${VSTL_BUILD_VERSION:-VSTL-${SERVER_ROLE_SLUG}-${TS}${GIT_SHA:+-$GIT_SHA}}"
+
+json_escape() {
+  local value="${1:-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/ }"
+  value="${value//$'\r'/ }"
+  printf '%s' "$value"
+}
+
+write_build_info_json() {
+  local out="$1"
+  local filesystem_sha="${2:-}"
+  {
+    printf '{\n'
+    printf '  "build_version": "%s",\n' "$(json_escape "$BUILD_VERSION")"
+    printf '  "deployed_at": "%s",\n' "$(json_escape "$BUILD_DEPLOYED_AT")"
+    printf '  "server_role": "%s",\n' "$(json_escape "$SERVER_ROLE")"
+    printf '  "git_sha": "%s",\n' "$(json_escape "$GIT_SHA")"
+    printf '  "git_branch": "%s",\n' "$(json_escape "$GIT_BRANCH")"
+    printf '  "source_root": "%s",\n' "$(json_escape "$SRC_ROOT")"
+    printf '  "install_root": "%s",\n' "$(json_escape "$INSTALL_ROOT")"
+    printf '  "pxe_root": "%s"' "$(json_escape "$PXE_ROOT")"
+    if [[ -n "$filesystem_sha" ]]; then
+      printf ',\n  "filesystem_sha256": "%s"\n' "$(json_escape "$filesystem_sha")"
+    else
+      printf '\n'
+    fi
+    printf '}\n'
+  } > "$out"
+}
+
+append_build_history() {
+  mkdir -p "$(dirname "$BUILD_HISTORY_JSONL")"
+  tr '\n' ' ' < "$BUILD_INFO_JSON" | sed -E 's/[[:space:]]+/ /g; s/[[:space:]]+$//' >> "$BUILD_HISTORY_JSONL"
+  printf '\n' >> "$BUILD_HISTORY_JSONL"
+}
 
 FILES=(
   "vstl-imaging-client.sh"
@@ -61,9 +115,12 @@ command -v mksquashfs >/dev/null 2>&1 || {
 }
 
 mkdir -p "$BACKUP_DIR"
+write_build_info_json "$BUILD_INFO_JSON"
+cp -a "$BUILD_INFO_JSON" "$BUILD_INFO_CURRENT"
 
 echo "=== VSTL bench-client live deploy ==="
 echo "Timestamp     : $TS"
+echo "Build version : $BUILD_VERSION"
 echo "Source        : $SRC_BENCH"
 echo "Install root  : $INSTALL_ROOT"
 echo "PXE root      : $PXE_ROOT"
@@ -97,6 +154,8 @@ done
 for f in "${FILES[@]}"; do
   install -m 0644 "$SRC_BENCH/$f" "$ROOTFS_VSTL/$f"
 done
+install -m 0644 "$BUILD_INFO_JSON" "$INSTALL_ROOT/bench-client/vstl_build_info.json"
+install -m 0644 "$BUILD_INFO_JSON" "$ROOTFS_VSTL/vstl_build_info.json"
 if [[ -d "$SRC_BENCH/sounds" ]]; then
   if [[ "$(readlink -f "$SRC_BENCH/sounds")" != "$(readlink -f "$INSTALL_ROOT/bench-client/sounds" 2>/dev/null || printf '%s' "$INSTALL_ROOT/bench-client/sounds")" ]]; then
     rm -rf "$INSTALL_ROOT/bench-client/sounds"
@@ -148,6 +207,11 @@ rm -f "$tmp_squash"
 mksquashfs "$ROOTFS_DIR" "$tmp_squash" -comp xz -b 1048576 -Xbcj x86 -noappend -no-progress
 mv "$tmp_squash" "$BUILD_SQUASHFS"
 cp -a "$BUILD_SQUASHFS" "$PXE_SQUASHFS"
+SQUASH_SHA="$(sha256sum "$PXE_SQUASHFS" | awk '{print $1}')"
+write_build_info_json "$BUILD_INFO_JSON" "$SQUASH_SHA"
+cp -a "$BUILD_INFO_JSON" "$BUILD_INFO_CURRENT"
+cp -a "$BUILD_INFO_JSON" "$INSTALL_ROOT/bench-client/vstl_build_info.json"
+append_build_history
 
 echo "=== Writing full setup tar backup ==="
 SETUP_TAR_TS="$BACKUP_ROOT/vstl-imaging-setup-$TS.tar.gz"
@@ -164,6 +228,8 @@ sha256sum "$BUILD_SQUASHFS" "$PXE_SQUASHFS" "$SETUP_TAR_TS" "$SETUP_TAR_CURRENT"
 echo
 echo "=== Deploy complete ==="
 echo "Rollback backup       : $BACKUP_DIR"
+echo "Build info current    : $BUILD_INFO_CURRENT"
+echo "Build history         : $BUILD_HISTORY_JSONL"
 echo "Setup tar timestamped : $SETUP_TAR_TS"
 echo "Setup tar current     : $SETUP_TAR_CURRENT"
 echo "PXE boot chain        : unchanged"

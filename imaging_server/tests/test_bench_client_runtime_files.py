@@ -32,9 +32,21 @@ def test_live_deploy_copies_all_tui_runtime_modules_into_rootfs():
     assert "ARCHIVE_OLD_IMAGES:-0" in DEPLOY
 
 
+def test_live_deploy_stamps_build_version_and_server_history():
+    assert "BUILD_INFO_JSON=\"$BACKUP_DIR/vstl_build_info.json\"" in DEPLOY
+    assert "BUILD_INFO_CURRENT=\"$BACKUP_ROOT/vstl-build-current.json\"" in DEPLOY
+    assert "BUILD_HISTORY_JSONL=\"$BACKUP_ROOT/build-version-history.jsonl\"" in DEPLOY
+    assert 'BUILD_VERSION="${VSTL_BUILD_VERSION:-VSTL-${SERVER_ROLE_SLUG}-${TS}${GIT_SHA:+-$GIT_SHA}}"' in DEPLOY
+    assert 'install -m 0644 "$BUILD_INFO_JSON" "$ROOTFS_VSTL/vstl_build_info.json"' in DEPLOY
+    assert "append_build_history" in DEPLOY
+    assert "filesystem_sha256" in DEPLOY
+
+
 def test_iso_builder_bakes_all_tui_runtime_modules():
     for name in RUNTIME_FILES:
         assert name in BUILD_ISO, f"ISO builder does not include {name}"
+    assert "BUILD_VERSION=\"${VSTL_BUILD_VERSION:-VSTL-iso-${BUILD_TS}${GIT_SHA:+-$GIT_SHA}}\"" in BUILD_ISO
+    assert 'write_build_info_json "$WORK_DIR/rootfs/opt/vstl/vstl_build_info.json"' in BUILD_ISO
 
 
 def test_pxe_rootfs_does_not_enable_duplicate_vstl_systemd_start():

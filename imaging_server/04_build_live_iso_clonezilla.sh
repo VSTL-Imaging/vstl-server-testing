@@ -26,6 +26,11 @@ cd "$SCRIPT_DIR"
 BUILD_DIR="$SCRIPT_DIR/build"
 WORK_DIR="$BUILD_DIR/cz"
 ISO_OUT="$BUILD_DIR/vstl-live-amd64.iso"
+BUILD_TS="${VSTL_BUILD_TS:-$(date +%Y%m%d_%H%M%S)}"
+GIT_SHA="$(git -C "$SCRIPT_DIR" rev-parse --short=12 HEAD 2>/dev/null || true)"
+GIT_BRANCH="$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+BUILD_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+BUILD_VERSION="${VSTL_BUILD_VERSION:-VSTL-iso-${BUILD_TS}${GIT_SHA:+-$GIT_SHA}}"
 
 # Official Clonezilla Live AMD64 — Debian Stable base, x86_64 arch
 # Version is pinned so builds are reproducible; bump manually to upgrade.
@@ -36,6 +41,28 @@ CZ_ISO_CACHED="$BUILD_DIR/clonezilla-live-${CZ_VERSION}-amd64.iso"
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 die() { echo "FATAL: $*" >&2; exit 1; }
+json_escape() {
+    local value="${1:-}"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\n'/ }"
+    value="${value//$'\r'/ }"
+    printf '%s' "$value"
+}
+
+write_build_info_json() {
+    local out="$1"
+    {
+        printf '{\n'
+        printf '  "build_version": "%s",\n' "$(json_escape "$BUILD_VERSION")"
+        printf '  "built_at": "%s",\n' "$(json_escape "$BUILD_BUILT_AT")"
+        printf '  "server_role": "iso",\n'
+        printf '  "git_sha": "%s",\n' "$(json_escape "$GIT_SHA")"
+        printf '  "git_branch": "%s",\n' "$(json_escape "$GIT_BRANCH")"
+        printf '  "source_root": "%s"\n' "$(json_escape "$SCRIPT_DIR")"
+        printf '}\n'
+    } > "$out"
+}
 
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     die "This script must be run as root (use sudo)."
@@ -86,6 +113,7 @@ unsquashfs -d "$WORK_DIR/rootfs" -no-progress "$SQUASH_IN"
 # --- 5. Inject the VSTL bench client + config + systemd service --------------
 log "Injecting VSTL bench client ..."
 mkdir -p "$WORK_DIR/rootfs/opt/vstl"
+log "Bench build version: $BUILD_VERSION"
 
 # Phase-1 entrypoint + Python TUI + hardware detection module. The legacy
 # shell client is retained as a fallback (vstl-bench-entry.sh execs it if the
@@ -111,6 +139,7 @@ if [[ -d "$BENCH_DIR/sounds" ]]; then
     rm -rf "$WORK_DIR/rootfs/opt/vstl/sounds"
     cp -a "$BENCH_DIR/sounds" "$WORK_DIR/rootfs/opt/vstl/sounds"
 fi
+write_build_info_json "$WORK_DIR/rootfs/opt/vstl/vstl_build_info.json"
 
 # .env (with the API key) sits at the imaging_server root. It was created by
 # the operator when they chmod 600'd it. If missing, copy the example so the

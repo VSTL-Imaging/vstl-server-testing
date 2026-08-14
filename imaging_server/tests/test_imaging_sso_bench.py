@@ -54,6 +54,21 @@ def test_login_controls_layer_before_bench_screen_access():
     assert "Select your technician level" not in technician_fn
 
 
+def test_layer_selection_screen_shows_overall_build_version():
+    assert 'BUILD_INFO_FILE = "/opt/vstl/vstl_build_info.json"' in TUI
+    assert 'DEFAULT_OVERALL_BUILD_VERSION = "dev-local"' in TUI
+    assert "def _load_overall_build_info(" in TUI
+    assert "def _overall_build_version_label(" in TUI
+
+    layer_fn = TUI[
+        TUI.index("def screen_working_layer("):
+        TUI.index("def screen_box_picker(")
+    ]
+    assert "build_label = _overall_build_version_label()" in layer_fn
+    assert "(build_label, curses.color_pair(DIM_PAIR))" in layer_fn
+    assert "9 + index * 2" in layer_fn
+
+
 def test_hidden_testing_mode_processes_bypass_reporting_login_and_box_flow():
     assert "TESTING_MODE_CTRL_T = 20" in TUI
     assert 'TESTING_MODE_HOTKEY_LABEL = "Ctrl+Shift+Alt+T"' in TUI

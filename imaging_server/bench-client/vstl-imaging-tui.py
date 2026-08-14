@@ -57,6 +57,48 @@ from typing import Optional
 # below sets this header.
 # ----------------------------------------------------------------------------
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
+BUILD_INFO_FILE = "/opt/vstl/vstl_build_info.json"
+DEFAULT_OVERALL_BUILD_VERSION = "dev-local"
+
+
+def _load_overall_build_info() -> dict:
+    path = os.environ.get("VSTL_BUILD_INFO_FILE") or BUILD_INFO_FILE
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, TypeError):
+        env_version = str(os.environ.get("VSTL_BUILD_VERSION") or "").strip()
+        if env_version:
+            return {
+                "build_version": env_version,
+                "deployed_at": str(os.environ.get("VSTL_BUILD_DEPLOYED_AT") or "").strip(),
+            }
+        return {}
+
+
+def _overall_build_version_label() -> str:
+    info = _load_overall_build_info()
+    version = str(
+        info.get("build_version")
+        or info.get("version")
+        or os.environ.get("VSTL_BUILD_VERSION")
+        or DEFAULT_OVERALL_BUILD_VERSION
+    ).strip()
+    deployed_at = str(info.get("deployed_at") or info.get("built_at") or "").strip()
+    git_sha = str(info.get("git_sha") or info.get("commit") or "").strip()
+    server_role = str(info.get("server_role") or "").strip()
+
+    details = []
+    if server_role and server_role.lower() not in version.lower():
+        details.append(server_role)
+    if git_sha and git_sha[:12] not in version:
+        details.append(git_sha[:12])
+    if deployed_at:
+        details.append(deployed_at.replace("T", " ").replace("Z", " UTC")[:23])
+    if details:
+        return f"Build: {version} ({' | '.join(details)})"
+    return f"Build: {version}"
 
 _WIPE_METHOD_STANDARDS = {
     "NVMe_SANITIZE_BLOCK_ERASE": "NIST SP 800-88 Purge",
@@ -1580,11 +1622,13 @@ def screen_working_layer(stdscr, operator_name: str, available_layers: list | No
             options.append(normalized)
     if not options:
         return ""
+    build_label = _overall_build_version_label()
     selected = 0
     while True:
         _begin_screen_frame(stdscr, "Select working layer")
         center_block(stdscr, [
             (f"Operator: {operator_name or 'VSTL 360 user'}", curses.A_BOLD),
+            (build_label, curses.color_pair(DIM_PAIR)),
             ("", 0),
             ("Choose the bench mode for this unit.", curses.color_pair(DIM_PAIR)),
             ("L1 and L2 users may select either L1 or L2.", curses.color_pair(DIM_PAIR)),
@@ -1594,7 +1638,7 @@ def screen_working_layer(stdscr, operator_name: str, available_layers: list | No
             label = f"{index + 1}. {layer}"
             _draw_selectable_row(
                 stdscr,
-                8 + index * 2,
+                9 + index * 2,
                 max(4, (width - len(label) - 6) // 2),
                 label,
                 index == selected,

@@ -181,6 +181,49 @@ def test_restore_retries_without_precreate_when_precreated_layout_reports_broken
     assert any("retrying with image partition table" in event.get("last_line", "") for event in events)
 
 
+def test_restore_uses_direct_fallback_when_clonezilla_retry_still_reports_broken(monkeypatch):
+    attempts = []
+    commands = []
+    direct_calls = []
+    events = []
+
+    def fake_once(*args, **kwargs):
+        allow_precreate = kwargs.get("allow_precreate", True)
+        attempts.append(allow_precreate)
+        return (
+            False,
+            "The image of this partition is broken: nvme0n1p3\nrc=125",
+            allow_precreate,
+        )
+
+    def fake_run(argv, timeout=30):
+        commands.append(argv)
+        return 0, "", ""
+
+    def fake_direct(image_dir, device, progress_callback=None, timeout=30):
+        direct_calls.append((image_dir, device))
+        return True, "direct restore ok"
+
+    monkeypatch.setattr(ir, "_ocs_restoredisk_once", fake_once)
+    monkeypatch.setattr(ir, "_run", fake_run)
+    monkeypatch.setattr(ir, "_direct_partclone_restore", fake_direct)
+
+    ok, evidence = ir._ocs_restoredisk(
+        "image",
+        "/dev/nvme0n1",
+        image_dir="/home/partimag/image",
+        progress_callback=events.append,
+    )
+
+    assert ok is True
+    assert attempts == [True, False]
+    assert direct_calls == [("/home/partimag/image", "/dev/nvme0n1")]
+    assert ["sgdisk", "--zap-all", "/dev/nvme0n1"] in commands
+    assert "direct partclone fallback" in evidence
+    assert "direct restore ok" in evidence
+    assert any("direct partition restore" in event.get("last_line", "") for event in events)
+
+
 def test_precreated_restore_attempt_aborts_immediately_on_broken_image_marker(monkeypatch, tmp_path):
     image_dir = tmp_path / "image"
     image_dir.mkdir()
@@ -231,6 +274,91 @@ def test_precreated_restore_attempt_aborts_immediately_on_broken_image_marker(mo
     assert "detected broken partition marker" in evidence
     assert "rc=125" in evidence
     assert any("retrying with image partition table" in event.get("last_line", "") for event in events)
+
+
+def test_non_precreated_restore_attempt_aborts_immediately_for_direct_fallback(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "parts").write_text("nvme0n1p1 nvme0n1p2 nvme0n1p3 nvme0n1p4\n", encoding="utf-8")
+    original_popen = subprocess.Popen
+
+    def fake_popen(_cmd, **kwargs):
+        return original_popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys,time;"
+                    "print('The image of this partition is broken: nvme0n1p3', flush=True);"
+                    "time.sleep(20)"
+                ),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+            start_new_session=kwargs.get("start_new_session", False),
+        )
+
+    monkeypatch.setattr(ir.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(ir.select, "select", lambda r, _w, _x, _timeout: (r, [], []))
+    events = []
+    started = time.monotonic()
+
+    ok, evidence, precreated = ir._ocs_restoredisk_once(
+        "image",
+        "/dev/nvme0n1",
+        image_dir=str(image_dir),
+        progress_callback=events.append,
+        timeout=30,
+        allow_precreate=False,
+    )
+
+    assert ok is False
+    assert precreated is False
+    assert time.monotonic() - started < 5
+    assert "detected broken partition marker" in evidence
+    assert "rc=125" in evidence
+    assert any("direct partition restore" in event.get("last_line", "") for event in events)
+
+
+def test_direct_partclone_restore_streams_split_xz_images(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "parts").write_text("nvme0n1p1 nvme0n1p2\n", encoding="utf-8")
+    (image_dir / "nvme0n1p1.vfat-ptcl-img.xz.aa").write_text("efi", encoding="utf-8")
+    (image_dir / "nvme0n1p2.ntfs-ptcl-img.xz.aa").write_text("win-a", encoding="utf-8")
+    (image_dir / "nvme0n1p2.ntfs-ptcl-img.xz.ab").write_text("win-b", encoding="utf-8")
+    commands = []
+    maintenance = []
+
+    monkeypatch.setattr(
+        ir,
+        "_prepare_target_windows_gpt_from_image",
+        lambda *args, **kwargs: (True, True, "precreated target GPT"),
+    )
+
+    def fake_stream(shell_body, state, image_path, progress_callback, started, speed_state, timeout):
+        commands.append(shell_body)
+        return True, "stream ok"
+
+    def fake_run(argv, timeout=30):
+        maintenance.append(argv)
+        return 0, "", ""
+
+    monkeypatch.setattr(ir, "_run_direct_restore_command", fake_stream)
+    monkeypatch.setattr(ir, "_run", fake_run)
+
+    ok, evidence = ir._direct_partclone_restore(str(image_dir), "/dev/nvme0n1")
+
+    assert ok is True
+    assert len(commands) == 2
+    assert "xz -dc | partclone.restore -r -s - -o /dev/nvme0n1p1" in commands[0]
+    assert "nvme0n1p2.ntfs-ptcl-img.xz.aa" in commands[1]
+    assert "nvme0n1p2.ntfs-ptcl-img.xz.ab" in commands[1]
+    assert "partclone.restore -r -s - -o /dev/nvme0n1p2" in commands[1]
+    assert ["partprobe", "/dev/nvme0n1"] in maintenance
+    assert "precreated target GPT" in evidence
 
 
 def test_restore_does_not_retry_generic_precreated_layout_failure(monkeypatch):

@@ -62,7 +62,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v10"
+RESTORE_CLIENT_BUILD = "restore-track-v11"
 
 
 def _now_iso() -> str:
@@ -530,15 +530,21 @@ def _ocs_restoredisk_once(
                     if len(evidence_lines) > 500:
                         evidence_lines = evidence_lines[-500:]
                     _update_capture_state_from_line(piece, state)
-                    if precreated_layout and _restore_failure_should_retry_without_precreate(piece):
+                    if _restore_failure_should_retry_without_precreate(piece):
                         early_retry = True
-                        state["phase"] = "retrying without precreated layout"
-                        state["last_line"] = (
-                            "Clonezilla reported a broken partition image; retrying with image partition table"
-                        )
+                        if precreated_layout:
+                            state["phase"] = "retrying without precreated layout"
+                            state["last_line"] = (
+                                "Clonezilla reported a broken partition image; retrying with image partition table"
+                            )
+                        else:
+                            state["phase"] = "switching to direct partition restore"
+                            state["last_line"] = (
+                                "Clonezilla reported a broken partition image again; using direct partition restore"
+                            )
                         evidence_lines.append(
-                            "detected broken partition marker during precreated-layout restore; "
-                            "aborting this attempt for fallback retry"
+                            "detected broken partition marker during Clonezilla restore; "
+                            "aborting this attempt for fallback handling"
                         )
                         _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
                         _terminate_restore_process(proc)
@@ -627,7 +633,21 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
         timeout=timeout,
         allow_precreate=False,
     )
-    return retry_ok, "\n".join([evidence, *retry_prep, retry_ev])[-_EVIDENCE_CAP:]
+    combined = "\n".join([evidence, *retry_prep, retry_ev])[-_EVIDENCE_CAP:]
+    if retry_ok or not _restore_failure_should_retry_without_precreate(retry_ev):
+        return retry_ok, combined
+
+    _emit_restore_stage(
+        progress_callback,
+        "Clonezilla retry reported a broken partition image; using direct partition restore",
+    )
+    direct_ok, direct_ev = _direct_partclone_restore(
+        image_dir,
+        device,
+        progress_callback=progress_callback,
+        timeout=timeout,
+    )
+    return direct_ok, "\n".join([combined, "--- direct partclone fallback ---", direct_ev])[-_EVIDENCE_CAP:]
 
 
 def _restore_failure_summary(evidence: str) -> str:
@@ -1037,6 +1057,213 @@ def _prepare_target_windows_gpt_from_image(
         f"target_last_lba={target_last_lba}"
     )
     return True, True, "\n".join(evidence)
+
+
+def _image_files_for_part(image_dir: str, part: str) -> tuple[list[str], str, str]:
+    """Return Clonezilla image split files for one partition.
+
+    The kind is either ``partclone`` or ``raw``. The compression value is one of
+    ``xz``, ``gzip``, ``zstd``, or ``none``.
+    """
+    try:
+        names = os.listdir(image_dir)
+    except OSError:
+        return [], "", ""
+    candidates = []
+    prefix = f"{part}."
+    for name in names:
+        lower = name.lower()
+        if not name.startswith(prefix):
+            continue
+        if lower.endswith((".md5", ".sha1", ".sha256", ".sha512", ".log", ".txt")):
+            continue
+        if "-ptcl-img" in lower or "-dd-img" in lower:
+            candidates.append(os.path.join(image_dir, name))
+    if not candidates:
+        return [], "", ""
+    candidates.sort()
+    sample = os.path.basename(candidates[0]).lower()
+    kind = "partclone" if "-ptcl-img" in sample else "raw"
+    compression = "none"
+    if ".xz" in sample:
+        compression = "xz"
+    elif ".gz" in sample:
+        compression = "gzip"
+    elif ".zst" in sample or ".zstd" in sample:
+        compression = "zstd"
+    return candidates, kind, compression
+
+
+def _stream_decode_shell(files: list[str], compression: str) -> str:
+    cat_cmd = "cat " + " ".join(shlex.quote(path) for path in files)
+    if compression == "xz":
+        return f"{cat_cmd} | xz -dc"
+    if compression == "gzip":
+        return f"{cat_cmd} | gzip -dc"
+    if compression == "zstd":
+        return f"{cat_cmd} | zstd -dc"
+    return cat_cmd
+
+
+def _run_direct_restore_command(
+    shell_body: str,
+    state: dict,
+    image_dir: str,
+    progress_callback: Optional[Callable[[dict], None]],
+    started: float,
+    speed_state: dict,
+    timeout: int,
+) -> tuple[bool, str]:
+    wrapped_shell = f"set -o pipefail; {shell_body}"
+    evidence_lines = [f"$ bash -c {shlex.quote(wrapped_shell)}"]
+    try:
+        proc = subprocess.Popen(
+            ["bash", "-c", wrapped_shell],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        return False, "bash: not found"
+    except OSError as exc:
+        return False, f"OSError: {exc}"
+
+    buffer = ""
+    last_emit = 0.0
+    timed_out = False
+    while True:
+        now = time.monotonic()
+        if now - started > timeout:
+            timed_out = True
+            evidence_lines.append(f"direct restore timeout after {timeout}s")
+            _terminate_restore_process(proc)
+            break
+        if proc.stdout is None:
+            break
+        readable, _, _ = select.select([proc.stdout], [], [], 0.5)
+        if readable:
+            chunk = os.read(proc.stdout.fileno(), 4096).decode("utf-8", "replace")
+            if chunk:
+                buffer += chunk
+                pieces = buffer.replace("\r", "\n").split("\n")
+                buffer = pieces.pop() if pieces else ""
+                for piece in pieces:
+                    piece = piece.strip()
+                    if not piece:
+                        continue
+                    evidence_lines.append(piece)
+                    if len(evidence_lines) > 300:
+                        evidence_lines = evidence_lines[-300:]
+                    _update_capture_state_from_line(piece, state)
+            elif proc.poll() is not None:
+                break
+        if now - last_emit >= 1.0:
+            _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+            last_emit = now
+        if proc.poll() is not None:
+            break
+    if buffer.strip():
+        evidence_lines.append(buffer.strip())
+        _update_capture_state_from_line(buffer.strip(), state)
+    rc_value = proc.wait() if not timed_out else 124
+    evidence_lines.append(f"rc={rc_value}")
+    _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+    return rc_value == 0, "\n".join(evidence_lines)[-_EVIDENCE_CAP:]
+
+
+def _direct_partclone_restore(
+    image_dir: str,
+    device: str,
+    progress_callback: Optional[Callable[[dict], None]] = None,
+    timeout: int = 4 * 3600,
+) -> tuple[bool, str]:
+    """Fallback restore path that bypasses Clonezilla's restoredisk wrapper.
+
+    It still uses the Clonezilla/partclone image files, but streams each
+    partition directly into the target partition that we created from the image
+    GPT metadata. This is reserved for the repeated false "broken partition"
+    condition seen in the Clonezilla wrapper.
+    """
+    started = time.monotonic()
+    speed_state: dict = {}
+    evidence: list[str] = []
+    prep_ok, precreated, prep_ev = _prepare_target_windows_gpt_from_image(
+        image_dir, device, progress_callback
+    )
+    evidence.append(prep_ev)
+    if not prep_ok or not precreated:
+        evidence.append("direct restore unavailable: target GPT could not be precreated")
+        return False, "\n".join(evidence)[-_EVIDENCE_CAP:]
+
+    parts = _parts_from_image_dir(image_dir)
+    if not parts:
+        return False, "\n".join([*evidence, "direct restore unavailable: image parts file is empty"])[-_EVIDENCE_CAP:]
+
+    state = {
+        "operation": "restoring",
+        "phase": "direct partition restore",
+        "elapsed_sec": 0,
+        "image_dir": image_dir,
+        "device": device,
+        "parts": parts,
+        "parts_total": len(parts),
+        "completed_partitions": [],
+        "partition_percent": 0.0,
+        "overall_percent": 0.0,
+        "last_line": "Direct partition restore fallback started",
+    }
+    _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+
+    for part in parts:
+        number = _part_number(part)
+        if number is None:
+            return False, "\n".join([*evidence, f"direct restore failed: cannot parse partition number from {part}"])[-_EVIDENCE_CAP:]
+        target = _part_path(device, number)
+        files, kind, compression = _image_files_for_part(image_dir, part)
+        if not files:
+            return False, "\n".join([*evidence, f"direct restore failed: no image files for {part}"])[-_EVIDENCE_CAP:]
+
+        state["current_partition"] = part
+        state["partition_index"] = parts.index(part) + 1
+        state["partition_percent"] = 0.0
+        state["phase"] = f"direct restoring {part}"
+        state["last_line"] = f"Direct restoring {part} to {target}"
+        _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+
+        stream = _stream_decode_shell(files, compression)
+        if kind == "partclone":
+            shell_body = f"{stream} | partclone.restore -r -s - -o {shlex.quote(target)}"
+        else:
+            shell_body = f"{stream} | dd of={shlex.quote(target)} bs=16M conv=fsync status=none"
+        ok, ev = _run_direct_restore_command(
+            shell_body,
+            state,
+            image_dir,
+            progress_callback,
+            started,
+            speed_state,
+            timeout,
+        )
+        evidence.append(f"--- direct restore {part} -> {target} ---\n{ev}")
+        if not ok:
+            return False, "\n".join(evidence)[-_EVIDENCE_CAP:]
+        completed = state.setdefault("completed_partitions", [])
+        if part not in completed:
+            completed.append(part)
+        state["partition_percent"] = 100.0
+        state["last_line"] = f"Finished direct restore {part}"
+        _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+
+    for cmd in (["partprobe", device], ["udevadm", "settle"], ["sync"]):
+        rc, out, err = _run(cmd, timeout=60)
+        evidence.append(f"$ {' '.join(cmd)} rc={rc} {out[:200]} {err[:300]}")
+    state["phase"] = "direct partition restore completed"
+    state["last_line"] = "Direct partition restore completed; verifying restored disk"
+    state["partition_percent"] = 100.0
+    state["overall_percent"] = 100.0
+    _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+    return True, "\n".join(evidence)[-_EVIDENCE_CAP:]
 
 
 def _pick_restore_temp_path(size_bytes: int, partition_number: int) -> tuple[str, str]:

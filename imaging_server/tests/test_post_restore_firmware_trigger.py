@@ -353,10 +353,10 @@ def test_direct_partclone_restore_streams_split_xz_images(monkeypatch, tmp_path)
 
     assert ok is True
     assert len(commands) == 2
-    assert "xz -dc | partclone.restore -r -s - -o /dev/nvme0n1p1" in commands[0]
+    assert "xz -dc | partclone.restore -s - -o /dev/nvme0n1p1" in commands[0]
     assert "nvme0n1p2.ntfs-ptcl-img.xz.aa" in commands[1]
     assert "nvme0n1p2.ntfs-ptcl-img.xz.ab" in commands[1]
-    assert "partclone.restore -r -s - -o /dev/nvme0n1p2" in commands[1]
+    assert "partclone.restore -s - -o /dev/nvme0n1p2" in commands[1]
     assert ["partprobe", "/dev/nvme0n1"] in maintenance
     assert "precreated target GPT" in evidence
 

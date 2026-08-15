@@ -1233,7 +1233,7 @@ def _direct_partclone_restore(
 
         stream = _stream_decode_shell(files, compression)
         if kind == "partclone":
-            shell_body = f"{stream} | partclone.restore -r -s - -o {shlex.quote(target)}"
+            shell_body = f"{stream} | partclone.restore -s - -o {shlex.quote(target)}"
         else:
             shell_body = f"{stream} | dd of={shlex.quote(target)} bs=16M conv=fsync status=none"
         ok, ev = _run_direct_restore_command(

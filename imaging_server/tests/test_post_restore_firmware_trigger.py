@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -176,6 +178,58 @@ def test_restore_retries_without_precreate_when_precreated_layout_reports_broken
     assert ["sgdisk", "--zap-all", "/dev/nvme0n1"] in commands
     assert "retry without precreated layout" in evidence
     assert "retry restore ok" in evidence
+    assert any("retrying with image partition table" in event.get("last_line", "") for event in events)
+
+
+def test_precreated_restore_attempt_aborts_immediately_on_broken_image_marker(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "parts").write_text("nvme0n1p1 nvme0n1p2 nvme0n1p3 nvme0n1p4\n", encoding="utf-8")
+    original_popen = subprocess.Popen
+
+    monkeypatch.setattr(
+        ir,
+        "_prepare_target_windows_gpt_from_image",
+        lambda *args, **kwargs: (True, True, "precreated target GPT"),
+    )
+
+    def fake_popen(_cmd, **kwargs):
+        return original_popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys,time;"
+                    "print('The image of this partition is broken: nvme0n1p3', flush=True);"
+                    "time.sleep(20)"
+                ),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+            start_new_session=kwargs.get("start_new_session", False),
+        )
+
+    monkeypatch.setattr(ir.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(ir.select, "select", lambda r, _w, _x, _timeout: (r, [], []))
+    events = []
+    started = time.monotonic()
+
+    ok, evidence, precreated = ir._ocs_restoredisk_once(
+        "image",
+        "/dev/nvme0n1",
+        image_dir=str(image_dir),
+        progress_callback=events.append,
+        timeout=30,
+        allow_precreate=True,
+    )
+
+    assert ok is False
+    assert precreated is True
+    assert time.monotonic() - started < 5
+    assert "detected broken partition marker" in evidence
+    assert "rc=125" in evidence
     assert any("retrying with image partition table" in event.get("last_line", "") for event in events)
 
 

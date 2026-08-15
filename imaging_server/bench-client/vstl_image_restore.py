@@ -35,6 +35,7 @@ import json
 import os
 import re
 import select
+import signal
 import shlex
 import shutil
 import subprocess
@@ -61,7 +62,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v9"
+RESTORE_CLIENT_BUILD = "restore-track-v10"
 
 
 def _now_iso() -> str:
@@ -416,6 +417,24 @@ def _restore_failure_should_retry_without_precreate(evidence: str) -> bool:
     return any(marker in text for marker in broken_markers)
 
 
+def _terminate_restore_process(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        time.sleep(0.5)
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+        return
+    except (AttributeError, ProcessLookupError, OSError):
+        pass
+    try:
+        proc.terminate()
+        time.sleep(0.5)
+        if proc.poll() is None:
+            proc.kill()
+    except OSError:
+        pass
+
+
 def _ocs_restoredisk_once(
     image_subdir: str,
     device: str,
@@ -475,6 +494,7 @@ def _ocs_restoredisk_once(
             stderr=subprocess.STDOUT,
             bufsize=0,
             env=env,
+            start_new_session=True,
         )
     except FileNotFoundError:
         return False, "ocs-sr: not found (is Clonezilla Live booted?)", precreated_layout
@@ -484,11 +504,12 @@ def _ocs_restoredisk_once(
     buffer = ""
     last_emit = 0.0
     timed_out = False
+    early_retry = False
     while True:
         now = time.monotonic()
         if now - started > timeout:
             timed_out = True
-            proc.kill()
+            _terminate_restore_process(proc)
             evidence_lines.append(f"ocs-sr timeout after {timeout}s")
             break
 
@@ -509,6 +530,19 @@ def _ocs_restoredisk_once(
                     if len(evidence_lines) > 500:
                         evidence_lines = evidence_lines[-500:]
                     _update_capture_state_from_line(piece, state)
+                    if precreated_layout and _restore_failure_should_retry_without_precreate(piece):
+                        early_retry = True
+                        state["phase"] = "retrying without precreated layout"
+                        state["last_line"] = (
+                            "Clonezilla reported a broken partition image; retrying with image partition table"
+                        )
+                        evidence_lines.append(
+                            "detected broken partition marker during precreated-layout restore; "
+                            "aborting this attempt for fallback retry"
+                        )
+                        _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+                        _terminate_restore_process(proc)
+                        break
                     if _should_continue_after_partclone(piece, state) and proc.stdin:
                         try:
                             proc.stdin.write(b"\n")
@@ -518,9 +552,13 @@ def _ocs_restoredisk_once(
                             )
                         except (BrokenPipeError, OSError):
                             pass
+                if early_retry:
+                    break
             elif proc.poll() is not None:
                 break
 
+        if early_retry:
+            break
         if now - last_emit >= 1.0:
             _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
             last_emit = now
@@ -532,6 +570,8 @@ def _ocs_restoredisk_once(
         _update_capture_state_from_line(buffer, state)
 
     rc_value = proc.wait() if not timed_out else 124
+    if early_retry:
+        rc_value = 125
     elapsed = int(time.monotonic() - started)
     state["phase"] = "completed" if rc_value == 0 else "failed"
     state["elapsed_sec"] = elapsed

@@ -63,7 +63,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v15"
+RESTORE_CLIENT_BUILD = "restore-track-v16"
 
 
 def _now_iso() -> str:
@@ -1166,8 +1166,21 @@ def _partclone_log_path(part: str) -> str:
     return f"/tmp/vstl-partclone-{safe}.log"
 
 
-def _stream_decode_shell(files: list[str], compression: str) -> str:
-    cat_cmd = "cat " + " ".join(shlex.quote(path) for path in files)
+def _concat_stream_shell(files: list[str], mode: str = "cat") -> str:
+    quoted_files = " ".join(shlex.quote(path) for path in files)
+    if mode == "python":
+        streamer = (
+            "import shutil,sys; "
+            "out=sys.stdout.buffer; "
+            "buf=8*1024*1024; "
+            "[shutil.copyfileobj(open(p,'rb'), out, buf) for p in sys.argv[1:]]"
+        )
+        return f"python3 -c {shlex.quote(streamer)} {quoted_files}"
+    return f"cat {quoted_files}"
+
+
+def _stream_decode_shell(files: list[str], compression: str, mode: str = "cat") -> str:
+    cat_cmd = _concat_stream_shell(files, mode)
     if compression == "xz":
         return f"{cat_cmd} | xz -dc"
     if compression == "gzip":
@@ -1311,14 +1324,22 @@ def _run_direct_restore_command(
     return rc_value == 0, "\n".join(evidence_lines)[-_EVIDENCE_CAP:]
 
 
-def _partclone_restore_shell(stream: str, kind: str, target: str, part: str,
-                             ignore_crc: bool = False) -> str:
+def _partclone_restore_shell(
+    stream: str,
+    kind: str,
+    target: str,
+    part: str,
+    ignore_crc: bool = False,
+    generic_restore: bool = False,
+) -> str:
     log_path = _partclone_log_path(part)
     q_log = shlex.quote(log_path)
     q_target = shlex.quote(target)
     crc_arg = " --ignore_crc" if ignore_crc else ""
     if kind in {"raw", "dd"}:
         restore_cmd = f"dd of={q_target} bs=16M conv=fsync status=none"
+    elif generic_restore:
+        restore_cmd = f"partclone.restore -C{crc_arg} -L {q_log} -s - -o {q_target}"
     else:
         tool = "partclone." + re.sub(r"[^A-Za-z0-9_+.-]", "", kind)
         restore_cmd = f"{tool} -C{crc_arg} -L {q_log} -s - -r -o {q_target}"
@@ -1413,7 +1434,10 @@ def _direct_partclone_restore(
             timeout,
         )
         if not ok and _restore_failure_allows_direct_read_retry(ev):
-            evidence.append(f"direct restore {part}: image read/path error detected; remounting and retrying")
+            evidence.append(
+                f"direct restore {part}: image read/path error detected; "
+                "remounting and retrying with Python split-file streamer"
+            )
             ready_ok, ready_ev = _prepare_direct_restore_attempt(
                 device, number, files, nfs_host, nfs_share, mount_options
             )
@@ -1421,6 +1445,8 @@ def _direct_partclone_restore(
             if ready_ok:
                 state["last_line"] = f"Retrying {part} after image read/path check"
                 _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+                stream = _stream_decode_shell(files, compression, mode="python")
+                shell_body = _partclone_restore_shell(stream, kind, target, part, generic_restore=True)
                 ok, ev = _run_direct_restore_command(
                     shell_body,
                     state,
@@ -1446,7 +1472,8 @@ def _direct_partclone_restore(
             )
             if not ok and _restore_failure_allows_direct_read_retry(ev):
                 evidence.append(
-                    f"direct restore {part}: image read/path error during CRC-salvage retry; remounting and retrying"
+                    f"direct restore {part}: image read/path error during CRC-salvage retry; "
+                    "remounting and retrying with Python split-file streamer"
                 )
                 ready_ok, ready_ev = _prepare_direct_restore_attempt(
                     device, number, files, nfs_host, nfs_share, mount_options
@@ -1455,6 +1482,15 @@ def _direct_partclone_restore(
                 if ready_ok:
                     state["last_line"] = f"Retrying {part} after image read/path check"
                     _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+                    stream = _stream_decode_shell(files, compression, mode="python")
+                    shell_body = _partclone_restore_shell(
+                        stream,
+                        kind,
+                        target,
+                        part,
+                        ignore_crc=True,
+                        generic_restore=True,
+                    )
                     ok, ev = _run_direct_restore_command(
                         shell_body,
                         state,

@@ -503,6 +503,8 @@ def test_direct_partclone_restore_retries_read_path_error(monkeypatch, tmp_path)
     assert ok is True
     assert len(commands) == 2
     assert "--ignore_crc" not in commands[1]
+    assert "python3 -c" in commands[1]
+    assert "partclone.restore -C -L /tmp/vstl-partclone-nvme0n1p1.log -s - -o /dev/nvme0n1p1" in commands[1]
     assert len(readiness) == 2
     assert readiness[1][1:] == ("10.255.0.45", "/images/dev", "rw,nolock,vers=3,timeo=60")
     assert "image read/path error detected" in evidence

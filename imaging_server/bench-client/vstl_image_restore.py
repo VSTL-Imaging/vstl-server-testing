@@ -63,7 +63,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v14"
+RESTORE_CLIENT_BUILD = "restore-track-v15"
 
 
 def _now_iso() -> str:
@@ -1317,10 +1317,8 @@ def _partclone_restore_shell(stream: str, kind: str, target: str, part: str,
     q_log = shlex.quote(log_path)
     q_target = shlex.quote(target)
     crc_arg = " --ignore_crc" if ignore_crc else ""
-    if kind == "raw":
+    if kind in {"raw", "dd"}:
         restore_cmd = f"dd of={q_target} bs=16M conv=fsync status=none"
-    elif kind == "dd":
-        restore_cmd = f"partclone.dd -C{crc_arg} -L {q_log} -s - -o {q_target}"
     else:
         tool = "partclone." + re.sub(r"[^A-Za-z0-9_+.-]", "", kind)
         restore_cmd = f"{tool} -C{crc_arg} -L {q_log} -s - -r -o {q_target}"
@@ -1432,7 +1430,7 @@ def _direct_partclone_restore(
                     speed_state,
                     timeout,
                 )
-        if not ok and kind != "raw" and _restore_failure_allows_crc_salvage(ev):
+        if not ok and kind not in {"raw", "dd"} and _restore_failure_allows_crc_salvage(ev):
             evidence.append(f"direct restore {part}: CRC/broken image detected; retrying with --ignore_crc")
             state["last_line"] = f"Retrying {part} without Partclone CRC check"
             _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)

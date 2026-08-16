@@ -153,7 +153,8 @@ def test_restore_retries_without_precreate_when_precreated_layout_reports_broken
 
     def fake_once(*args, **kwargs):
         allow_precreate = kwargs.get("allow_precreate", True)
-        attempts.append(allow_precreate)
+        ignore_crc = kwargs.get("ignore_crc", False)
+        attempts.append((allow_precreate, ignore_crc))
         if allow_precreate:
             return (
                 False,
@@ -174,11 +175,57 @@ def test_restore_retries_without_precreate_when_precreated_layout_reports_broken
     )
 
     assert ok is True
-    assert attempts == [True, False]
+    assert attempts == [(True, False), (False, False)]
     assert ["sgdisk", "--zap-all", "/dev/nvme0n1"] in commands
     assert "retry without precreated layout" in evidence
     assert "retry restore ok" in evidence
     assert any("retrying with image partition table" in event.get("last_line", "") for event in events)
+
+
+def test_restore_uses_crc_salvage_after_repeated_broken_image(monkeypatch):
+    attempts = []
+    commands = []
+    direct_calls = []
+    events = []
+
+    def fake_once(*args, **kwargs):
+        allow_precreate = kwargs.get("allow_precreate", True)
+        ignore_crc = kwargs.get("ignore_crc", False)
+        attempts.append((allow_precreate, ignore_crc))
+        if ignore_crc:
+            return True, "crc salvage restore ok", False
+        return (
+            False,
+            "Partclone fail, please check /var/log/partclone.log\nCRC error\nrc=1",
+            allow_precreate,
+        )
+
+    def fake_run(argv, timeout=30):
+        commands.append(argv)
+        return 0, "", ""
+
+    def fake_direct(*args, **kwargs):
+        direct_calls.append(args)
+        return False, "direct should not run"
+
+    monkeypatch.setattr(ir, "_ocs_restoredisk_once", fake_once)
+    monkeypatch.setattr(ir, "_run", fake_run)
+    monkeypatch.setattr(ir, "_direct_partclone_restore", fake_direct)
+
+    ok, evidence = ir._ocs_restoredisk(
+        "image",
+        "/dev/nvme0n1",
+        image_dir="/home/partimag/image",
+        progress_callback=events.append,
+    )
+
+    assert ok is True
+    assert attempts == [(True, False), (False, False), (False, True)]
+    assert ["sgdisk", "--zap-all", "/dev/nvme0n1"] in commands
+    assert direct_calls == []
+    assert "retry without Partclone CRC check" in evidence
+    assert "crc salvage restore ok" in evidence
+    assert any("without Partclone CRC check" in event.get("last_line", "") for event in events)
 
 
 def test_restore_uses_direct_fallback_when_clonezilla_retry_still_reports_broken(monkeypatch):
@@ -189,7 +236,8 @@ def test_restore_uses_direct_fallback_when_clonezilla_retry_still_reports_broken
 
     def fake_once(*args, **kwargs):
         allow_precreate = kwargs.get("allow_precreate", True)
-        attempts.append(allow_precreate)
+        ignore_crc = kwargs.get("ignore_crc", False)
+        attempts.append((allow_precreate, ignore_crc))
         return (
             False,
             "The image of this partition is broken: nvme0n1p3\nrc=125",
@@ -216,9 +264,10 @@ def test_restore_uses_direct_fallback_when_clonezilla_retry_still_reports_broken
     )
 
     assert ok is True
-    assert attempts == [True, False]
+    assert attempts == [(True, False), (False, False), (False, True)]
     assert direct_calls == [("/home/partimag/image", "/dev/nvme0n1")]
     assert ["sgdisk", "--zap-all", "/dev/nvme0n1"] in commands
+    assert "retry without Partclone CRC check" in evidence
     assert "direct partclone fallback" in evidence
     assert "direct restore ok" in evidence
     assert any("direct partition restore" in event.get("last_line", "") for event in events)
@@ -363,11 +412,48 @@ def test_direct_partclone_restore_streams_split_xz_images(monkeypatch, tmp_path)
     assert "precreated target GPT" in evidence
 
 
+def test_direct_partclone_restore_retries_crc_with_ignore_crc(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "parts").write_text("nvme0n1p1\n", encoding="utf-8")
+    (image_dir / "nvme0n1p1.vfat-ptcl-img.xz.aa").write_text("efi", encoding="utf-8")
+    commands = []
+    events = []
+
+    monkeypatch.setattr(
+        ir,
+        "_prepare_target_windows_gpt_from_image",
+        lambda *args, **kwargs: (True, True, "precreated target GPT"),
+    )
+
+    def fake_stream(shell_body, state, image_path, progress_callback, started, speed_state, timeout):
+        commands.append(shell_body)
+        if len(commands) == 1:
+            return False, "CRC error: block_id=32463\nPartclone fail, please check log\nrc=1"
+        return True, "stream ok"
+
+    monkeypatch.setattr(ir, "_run_direct_restore_command", fake_stream)
+    monkeypatch.setattr(ir, "_run", lambda *args, **kwargs: (0, "", ""))
+
+    ok, evidence = ir._direct_partclone_restore(
+        str(image_dir),
+        "/dev/nvme0n1",
+        progress_callback=events.append,
+    )
+
+    assert ok is True
+    assert len(commands) == 2
+    assert "--ignore_crc" not in commands[0]
+    assert "--ignore_crc" in commands[1]
+    assert "CRC/broken image detected" in evidence
+    assert any("without Partclone CRC check" in event.get("last_line", "") for event in events)
+
+
 def test_restore_does_not_retry_generic_precreated_layout_failure(monkeypatch):
     attempts = []
 
     def fake_once(*args, **kwargs):
-        attempts.append(kwargs.get("allow_precreate", True))
+        attempts.append((kwargs.get("allow_precreate", True), kwargs.get("ignore_crc", False)))
         return False, "precreate ok\nnetwork unreachable\nrc=1", True
 
     monkeypatch.setattr(ir, "_ocs_restoredisk_once", fake_once)
@@ -377,7 +463,7 @@ def test_restore_does_not_retry_generic_precreated_layout_failure(monkeypatch):
     )
 
     assert ok is False
-    assert attempts == [True]
+    assert attempts == [(True, False)]
     assert "network unreachable" in evidence
 
 

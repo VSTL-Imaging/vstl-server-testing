@@ -62,7 +62,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v12"
+RESTORE_CLIENT_BUILD = "restore-track-v13"
 
 
 def _now_iso() -> str:
@@ -413,8 +413,24 @@ def _restore_failure_should_retry_without_precreate(evidence: str) -> bool:
         "partition image is broken",
         "image is broken",
         "is broken:",
+        "crc error",
+        "crc check",
+        "partclone fail",
     )
     return any(marker in text for marker in broken_markers)
+
+
+def _restore_failure_allows_crc_salvage(evidence: str) -> bool:
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", evidence or "").lower()
+    markers = (
+        "crc error",
+        "crc check",
+        "image of this partition is broken",
+        "partition image is broken",
+        "image is broken",
+        "partclone fail",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _terminate_restore_process(proc: subprocess.Popen) -> None:
@@ -442,6 +458,7 @@ def _ocs_restoredisk_once(
     progress_callback: Optional[Callable[[dict], None]] = None,
     timeout: int = 4 * 3600,
     allow_precreate: bool = True,
+    ignore_crc: bool = False,
 ) -> tuple[bool, str, bool]:
     """Run one Clonezilla ``ocs-sr restoredisk`` attempt and stream progress."""
     dev_name = os.path.basename(device)
@@ -461,6 +478,8 @@ def _ocs_restoredisk_once(
         "-icds", "-j2", "-p", "true",
         "restoredisk", image_subdir, dev_name,
     ]
+    if ignore_crc:
+        cmd.insert(cmd.index("restoredisk"), "-icrc")
     env = dict(os.environ)
     env.setdefault("OCS_ROOT", "/")
     env["OCSROOT"] = _NFS_MOUNT_POINT
@@ -484,6 +503,7 @@ def _ocs_restoredisk_once(
         prep_ev,
         f"$ {' '.join(cmd)}",
         f"OCSROOT={env.get('OCSROOT')}",
+        f"ignore_crc={ignore_crc}",
     ]
     _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
     try:
@@ -612,6 +632,7 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
         progress_callback=progress_callback,
         timeout=timeout,
         allow_precreate=True,
+        ignore_crc=False,
     )
     if ok or not precreated_layout or not _restore_failure_should_retry_without_precreate(evidence):
         return ok, evidence
@@ -632,10 +653,32 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
         progress_callback=progress_callback,
         timeout=timeout,
         allow_precreate=False,
+        ignore_crc=False,
     )
     combined = "\n".join([evidence, *retry_prep, retry_ev])[-_EVIDENCE_CAP:]
     if retry_ok or not _restore_failure_should_retry_without_precreate(retry_ev):
         return retry_ok, combined
+
+    _emit_restore_stage(
+        progress_callback,
+        "Clonezilla still reported broken/CRC image; retrying without Partclone CRC check",
+    )
+    crc_prep: list[str] = ["--- retry without Partclone CRC check ---"]
+    for cmd in (["sgdisk", "--zap-all", device], ["partprobe", device], ["udevadm", "settle"]):
+        rc, out, err = _run(cmd, timeout=60)
+        crc_prep.append(f"$ {' '.join(cmd)} rc={rc} {out[:200]} {err[:300]}")
+    crc_ok, crc_ev, _crc_precreated = _ocs_restoredisk_once(
+        image_subdir,
+        device,
+        image_dir=image_dir,
+        progress_callback=progress_callback,
+        timeout=timeout,
+        allow_precreate=False,
+        ignore_crc=True,
+    )
+    combined = "\n".join([combined, *crc_prep, crc_ev])[-_EVIDENCE_CAP:]
+    if crc_ok or not _restore_failure_allows_crc_salvage(crc_ev):
+        return crc_ok, combined
 
     _emit_restore_stage(
         progress_callback,
@@ -1179,17 +1222,19 @@ def _run_direct_restore_command(
     return rc_value == 0, "\n".join(evidence_lines)[-_EVIDENCE_CAP:]
 
 
-def _partclone_restore_shell(stream: str, kind: str, target: str, part: str) -> str:
+def _partclone_restore_shell(stream: str, kind: str, target: str, part: str,
+                             ignore_crc: bool = False) -> str:
     log_path = _partclone_log_path(part)
     q_log = shlex.quote(log_path)
     q_target = shlex.quote(target)
+    crc_arg = " --ignore_crc" if ignore_crc else ""
     if kind == "raw":
         restore_cmd = f"dd of={q_target} bs=16M conv=fsync status=none"
     elif kind == "dd":
-        restore_cmd = f"partclone.dd -C -L {q_log} -s - -o {q_target}"
+        restore_cmd = f"partclone.dd -C{crc_arg} -L {q_log} -s - -o {q_target}"
     else:
         tool = "partclone." + re.sub(r"[^A-Za-z0-9_+.-]", "", kind)
-        restore_cmd = f"{tool} -C -L {q_log} -s - -r -o {q_target}"
+        restore_cmd = f"{tool} -C{crc_arg} -L {q_log} -s - -r -o {q_target}"
     return (
         f"rm -f {q_log}; "
         f"{stream} | {restore_cmd}; "
@@ -1270,6 +1315,20 @@ def _direct_partclone_restore(
             speed_state,
             timeout,
         )
+        if not ok and kind != "raw" and _restore_failure_allows_crc_salvage(ev):
+            evidence.append(f"direct restore {part}: CRC/broken image detected; retrying with --ignore_crc")
+            state["last_line"] = f"Retrying {part} without Partclone CRC check"
+            _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+            shell_body = _partclone_restore_shell(stream, kind, target, part, ignore_crc=True)
+            ok, ev = _run_direct_restore_command(
+                shell_body,
+                state,
+                image_dir,
+                progress_callback,
+                started,
+                speed_state,
+                timeout,
+            )
         evidence.append(f"--- direct restore {part} -> {target} ---\n{ev}")
         if not ok:
             return False, "\n".join(evidence)[-_EVIDENCE_CAP:]

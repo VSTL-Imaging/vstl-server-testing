@@ -63,7 +63,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v17"
+RESTORE_CLIENT_BUILD = "restore-track-v18"
 RESTORE_NFS_MOUNT_OPTIONS = (
     "rw,nolock,vers=3,proto=tcp,hard,timeo=600,retrans=5,"
     "rsize=1048576,wsize=1048576"
@@ -667,9 +667,7 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
         "Clonezilla reported a broken partition image; retrying with image partition table",
     )
     retry_prep: list[str] = ["--- retry without precreated layout ---"]
-    for cmd in (["sgdisk", "--zap-all", device], ["partprobe", device], ["udevadm", "settle"]):
-        rc, out, err = _run(cmd, timeout=60)
-        retry_prep.append(f"$ {' '.join(cmd)} rc={rc} {out[:200]} {err[:300]}")
+    _zap_target_disk_for_restore(device, retry_prep)
 
     retry_ok, retry_ev, _retry_precreated = _ocs_restoredisk_once(
         image_subdir,
@@ -689,9 +687,7 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
         "Clonezilla still reported broken/CRC image; retrying without Partclone CRC check",
     )
     crc_prep: list[str] = ["--- retry without Partclone CRC check ---"]
-    for cmd in (["sgdisk", "--zap-all", device], ["partprobe", device], ["udevadm", "settle"]):
-        rc, out, err = _run(cmd, timeout=60)
-        crc_prep.append(f"$ {' '.join(cmd)} rc={rc} {out[:200]} {err[:300]}")
+    _zap_target_disk_for_restore(device, crc_prep)
     crc_ok, crc_ev, _crc_precreated = _ocs_restoredisk_once(
         image_subdir,
         device,
@@ -1002,6 +998,89 @@ def _source_sector_count_to_target_count(
     return _ceil_div(source_sector_count * source_sector_size, target_sector_size)
 
 
+def _append_restore_cmd_evidence(
+    evidence: list[str],
+    cmd: list[str],
+    timeout: int = 60,
+    out_cap: int = 300,
+    err_cap: int = 500,
+) -> int:
+    rc, out, err = _run(cmd, timeout=timeout)
+    evidence.append(f"$ {' '.join(cmd)} rc={rc} {out[:out_cap]} {err[:err_cap]}")
+    return rc
+
+
+def _target_partition_paths(device: str) -> list[str]:
+    rc, out, _err = _run(["lsblk", "-ln", "-o", "PATH", device], timeout=20)
+    if rc != 0:
+        return []
+    paths = []
+    for raw in out.splitlines():
+        path = raw.strip()
+        if path and path != device:
+            paths.append(path)
+    return sorted(set(paths), key=len, reverse=True)
+
+
+def _quiesce_target_disk(device: str, evidence: list[str]) -> None:
+    for part in _target_partition_paths(device):
+        _append_restore_cmd_evidence(evidence, ["swapoff", part], timeout=20)
+        _append_restore_cmd_evidence(evidence, ["umount", "-fl", part], timeout=20)
+    _append_restore_cmd_evidence(evidence, ["sync"], timeout=30)
+    _append_restore_cmd_evidence(evidence, ["blockdev", "--flushbufs", device], timeout=30)
+    _append_restore_cmd_evidence(evidence, ["partprobe", device], timeout=20)
+    _append_restore_cmd_evidence(evidence, ["udevadm", "settle"], timeout=20)
+
+
+def _zero_target_disk_edges(device: str, evidence: list[str]) -> None:
+    _append_restore_cmd_evidence(
+        evidence,
+        ["dd", "if=/dev/zero", f"of={device}", "bs=1M", "count=32", "conv=fsync"],
+        timeout=120,
+    )
+    rc, out, err = _run(["blockdev", "--getsz", device], timeout=20)
+    evidence.append(f"$ blockdev --getsz {device} rc={rc} {out[:120]} {err[:200]}")
+    if rc != 0:
+        return
+    try:
+        sectors_512 = int(out.strip())
+    except ValueError:
+        return
+    if sectors_512 <= 65536:
+        return
+    seek = max(0, sectors_512 - 65536)
+    _append_restore_cmd_evidence(
+        evidence,
+        [
+            "dd",
+            "if=/dev/zero",
+            f"of={device}",
+            "bs=512",
+            "count=65536",
+            f"seek={seek}",
+            "conv=fsync",
+        ],
+        timeout=120,
+    )
+
+
+def _zap_target_disk_for_restore(device: str, evidence: list[str]) -> bool:
+    _quiesce_target_disk(device, evidence)
+    rc = _append_restore_cmd_evidence(evidence, ["sgdisk", "--zap-all", device], timeout=60)
+    if rc == 0:
+        return True
+
+    evidence.append(
+        "sgdisk zap failed; clearing stale target signatures and retrying GPT cleanup"
+    )
+    for part in _target_partition_paths(device):
+        _append_restore_cmd_evidence(evidence, ["wipefs", "-af", part], timeout=30)
+    _append_restore_cmd_evidence(evidence, ["wipefs", "-af", device], timeout=60)
+    _zero_target_disk_edges(device, evidence)
+    _quiesce_target_disk(device, evidence)
+    return _append_restore_cmd_evidence(evidence, ["sgdisk", "--zap-all", device], timeout=60) == 0
+
+
 def _prepare_target_windows_gpt_from_image(
     image_dir: str,
     device: str,
@@ -1094,10 +1173,7 @@ def _prepare_target_windows_gpt_from_image(
         target_parts.append(target)
 
     _emit_restore_stage(progress_callback, "Pre-restore: creating target Windows GPT")
-    cmd = ["sgdisk", "--zap-all", device]
-    rc, out, err = _run(cmd, timeout=60)
-    evidence.append(f"$ {' '.join(cmd)} rc={rc} {out[:200]} {err[:300]}")
-    if rc != 0:
+    if not _zap_target_disk_for_restore(device, evidence):
         return False, False, "\n".join(evidence)
 
     cmd = ["sgdisk", "--clear", "--set-alignment=1"]

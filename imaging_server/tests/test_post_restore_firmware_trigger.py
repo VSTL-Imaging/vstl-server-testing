@@ -120,6 +120,44 @@ def test_restore_precreates_512_sector_image_on_4096_sector_target(monkeypatch, 
     assert "--attributes=4:set:63" in sgdisk_create
 
 
+def test_restore_precreate_retries_sgdisk_zap_after_stale_signatures(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "disk").write_text("nvme0n1\n", encoding="utf-8")
+    (image_dir / "nvme0n1-pt.sf").write_text(_latitude_5330_sfdisk_text(), encoding="utf-8")
+    calls = []
+    zap_attempts = 0
+
+    def fake_run(argv, timeout=30):
+        nonlocal zap_attempts
+        calls.append(argv)
+        if argv[:2] == ["blockdev", "--getsz"]:
+            return 0, "500118192\n", ""
+        if argv[:2] == ["blockdev", "--getss"]:
+            return 0, "512\n", ""
+        if argv[:3] == ["lsblk", "-ln", "-o"]:
+            return 0, "/dev/nvme0n1\n/dev/nvme0n1p1\n", ""
+        if argv == ["sgdisk", "--zap-all", "/dev/nvme0n1"]:
+            zap_attempts += 1
+            if zap_attempts == 1:
+                return 11, "", "stale target table"
+        return 0, "", ""
+
+    monkeypatch.setattr(ir, "_run", fake_run)
+
+    ok, precreated, evidence = ir._prepare_target_windows_gpt_from_image(
+        str(image_dir), "/dev/nvme0n1"
+    )
+
+    assert ok is True
+    assert precreated is True
+    assert zap_attempts == 2
+    assert "clearing stale target signatures" in evidence
+    assert ["wipefs", "-af", "/dev/nvme0n1p1"] in calls
+    assert ["wipefs", "-af", "/dev/nvme0n1"] in calls
+    assert any(call[:3] == ["dd", "if=/dev/zero", "of=/dev/nvme0n1"] for call in calls)
+
+
 def test_restore_precreate_skips_non_windows_layout(monkeypatch, tmp_path):
     image_dir = tmp_path / "image"
     image_dir.mkdir()

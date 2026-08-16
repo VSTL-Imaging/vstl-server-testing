@@ -248,7 +248,7 @@ def test_restore_uses_direct_fallback_when_clonezilla_retry_still_reports_broken
         commands.append(argv)
         return 0, "", ""
 
-    def fake_direct(image_dir, device, progress_callback=None, timeout=30):
+    def fake_direct(image_dir, device, progress_callback=None, timeout=30, **kwargs):
         direct_calls.append((image_dir, device))
         return True, "direct restore ok"
 
@@ -398,6 +398,11 @@ def test_direct_partclone_restore_streams_split_xz_images(monkeypatch, tmp_path)
 
     monkeypatch.setattr(ir, "_run_direct_restore_command", fake_stream)
     monkeypatch.setattr(ir, "_run", fake_run)
+    monkeypatch.setattr(
+        ir,
+        "_wait_for_partition_node",
+        lambda *args, **kwargs: (True, "target partition node ready"),
+    )
 
     ok, evidence = ir._direct_partclone_restore(str(image_dir), "/dev/nvme0n1")
 
@@ -434,6 +439,11 @@ def test_direct_partclone_restore_retries_crc_with_ignore_crc(monkeypatch, tmp_p
 
     monkeypatch.setattr(ir, "_run_direct_restore_command", fake_stream)
     monkeypatch.setattr(ir, "_run", lambda *args, **kwargs: (0, "", ""))
+    monkeypatch.setattr(
+        ir,
+        "_wait_for_partition_node",
+        lambda *args, **kwargs: (True, "target partition node ready"),
+    )
 
     ok, evidence = ir._direct_partclone_restore(
         str(image_dir),
@@ -447,6 +457,55 @@ def test_direct_partclone_restore_retries_crc_with_ignore_crc(monkeypatch, tmp_p
     assert "--ignore_crc" in commands[1]
     assert "CRC/broken image detected" in evidence
     assert any("without Partclone CRC check" in event.get("last_line", "") for event in events)
+
+
+def test_direct_partclone_restore_retries_read_path_error(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "parts").write_text("nvme0n1p1\n", encoding="utf-8")
+    (image_dir / "nvme0n1p1.vfat-ptcl-img.xz.aa").write_text("efi", encoding="utf-8")
+    commands = []
+    readiness = []
+
+    monkeypatch.setattr(
+        ir,
+        "_prepare_target_windows_gpt_from_image",
+        lambda *args, **kwargs: (True, True, "precreated target GPT"),
+    )
+    monkeypatch.setattr(
+        ir,
+        "_wait_for_partition_node",
+        lambda *args, **kwargs: (True, "target partition node ready"),
+    )
+
+    def fake_readable(files, nfs_host="", nfs_share="", mount_options="rw,nolock,vers=3"):
+        readiness.append((list(files), nfs_host, nfs_share, mount_options))
+        return True, "image split file(s) readable"
+
+    def fake_stream(shell_body, state, image_path, progress_callback, started, speed_state, timeout):
+        commands.append(shell_body)
+        if len(commands) == 1:
+            return False, "read ERROR:No such file or directory\nPartclone fail\nrc=1"
+        return True, "stream ok"
+
+    monkeypatch.setattr(ir, "_ensure_direct_files_readable", fake_readable)
+    monkeypatch.setattr(ir, "_run_direct_restore_command", fake_stream)
+    monkeypatch.setattr(ir, "_run", lambda *args, **kwargs: (0, "", ""))
+
+    ok, evidence = ir._direct_partclone_restore(
+        str(image_dir),
+        "/dev/nvme0n1",
+        nfs_host="10.255.0.45",
+        nfs_share="/images/dev",
+        mount_options="rw,nolock,vers=3,timeo=60",
+    )
+
+    assert ok is True
+    assert len(commands) == 2
+    assert "--ignore_crc" not in commands[1]
+    assert len(readiness) == 2
+    assert readiness[1][1:] == ("10.255.0.45", "/images/dev", "rw,nolock,vers=3,timeo=60")
+    assert "image read/path error detected" in evidence
 
 
 def test_restore_does_not_retry_generic_precreated_layout_failure(monkeypatch):

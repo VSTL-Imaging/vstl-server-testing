@@ -38,6 +38,7 @@ import select
 import signal
 import shlex
 import shutil
+import stat
 import subprocess
 import time
 import urllib.error
@@ -62,7 +63,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v13"
+RESTORE_CLIENT_BUILD = "restore-track-v14"
 
 
 def _now_iso() -> str:
@@ -433,6 +434,21 @@ def _restore_failure_allows_crc_salvage(evidence: str) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _restore_failure_allows_direct_read_retry(evidence: str) -> bool:
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", evidence or "").lower()
+    markers = (
+        "read error:no such file or directory",
+        "read error: no such file or directory",
+        "source read error",
+        "source image too short",
+        "cat:",
+        "no such file or directory",
+        "stale file handle",
+        "input/output error",
+    )
+    return any(marker in text for marker in markers)
+
+
 def _terminate_restore_process(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -617,7 +633,10 @@ def _ocs_restoredisk_once(
 
 def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
                       progress_callback: Optional[Callable[[dict], None]] = None,
-                      timeout: int = 4 * 3600) -> tuple[bool, str]:
+                      timeout: int = 4 * 3600,
+                      nfs_host: str = "",
+                      nfs_share: str = "",
+                      mount_options: str = "rw,nolock,vers=3") -> tuple[bool, str]:
     """Run Clonezilla ``ocs-sr restoredisk`` with one safe layout retry.
 
     Some Clonezilla/partclone runs report a valid split image as "broken" when
@@ -689,6 +708,9 @@ def _ocs_restoredisk(image_subdir: str, device: str, image_dir: str = "",
         device,
         progress_callback=progress_callback,
         timeout=timeout,
+        nfs_host=nfs_host,
+        nfs_share=nfs_share,
+        mount_options=mount_options,
     )
     return direct_ok, "\n".join([combined, "--- direct partclone fallback ---", direct_ev])[-_EVIDENCE_CAP:]
 
@@ -1155,6 +1177,73 @@ def _stream_decode_shell(files: list[str], compression: str) -> str:
     return cat_cmd
 
 
+def _direct_files_readable(files: list[str]) -> tuple[bool, str]:
+    evidence: list[str] = []
+    for path in files:
+        try:
+            with open(path, "rb") as handle:
+                handle.read(1)
+        except OSError as exc:
+            evidence.append(f"{path}: {exc}")
+    if evidence:
+        return False, "; ".join(evidence)
+    return True, f"{len(files)} image split file(s) readable"
+
+
+def _ensure_direct_files_readable(
+    files: list[str],
+    nfs_host: str = "",
+    nfs_share: str = "",
+    mount_options: str = "rw,nolock,vers=3",
+) -> tuple[bool, str]:
+    ok, ev = _direct_files_readable(files)
+    if ok:
+        return True, ev
+    evidence = [f"image split file read failed: {ev}"]
+    if nfs_host and nfs_share:
+        evidence.append("remounting image share before direct restore retry")
+        umount_nfs()
+        mount_ok, mount_ev = mount_nfs(nfs_host, nfs_share, mount_options)
+        evidence.append(mount_ev)
+        if mount_ok:
+            ok, ev = _direct_files_readable(files)
+            evidence.append(ev)
+            if ok:
+                return True, "\n".join(evidence)
+    return False, "\n".join(evidence)
+
+
+def _prepare_direct_restore_attempt(
+    device: str,
+    number: int,
+    files: list[str],
+    nfs_host: str = "",
+    nfs_share: str = "",
+    mount_options: str = "rw,nolock,vers=3",
+) -> tuple[bool, str]:
+    node_ok, node_ev = _wait_for_partition_node(device, number)
+    read_ok, read_ev = _ensure_direct_files_readable(files, nfs_host, nfs_share, mount_options)
+    return node_ok and read_ok, "\n".join([node_ev, read_ev])
+
+
+def _wait_for_partition_node(device: str, number: int, timeout: int = 20) -> tuple[bool, str]:
+    target = _part_path(device, number)
+    evidence: list[str] = []
+    deadline = time.monotonic() + max(1, timeout)
+    while time.monotonic() < deadline:
+        try:
+            mode = os.stat(target).st_mode
+            if stat.S_ISBLK(mode):
+                return True, f"target partition node ready: {target}"
+            evidence.append(f"{target} exists but is not a block device")
+        except OSError as exc:
+            evidence.append(f"{target} not ready: {exc}")
+        _run(["partprobe", device], timeout=5)
+        _run(["udevadm", "settle"], timeout=5)
+        time.sleep(0.5)
+    return False, "; ".join(evidence[-4:])
+
+
 def _run_direct_restore_command(
     shell_body: str,
     state: dict,
@@ -1250,6 +1339,9 @@ def _direct_partclone_restore(
     device: str,
     progress_callback: Optional[Callable[[dict], None]] = None,
     timeout: int = 4 * 3600,
+    nfs_host: str = "",
+    nfs_share: str = "",
+    mount_options: str = "rw,nolock,vers=3",
 ) -> tuple[bool, str]:
     """Fallback restore path that bypasses Clonezilla's restoredisk wrapper.
 
@@ -1297,6 +1389,13 @@ def _direct_partclone_restore(
         if not files:
             return False, "\n".join([*evidence, f"direct restore failed: no image files for {part}"])[-_EVIDENCE_CAP:]
 
+        ready_ok, ready_ev = _prepare_direct_restore_attempt(
+            device, number, files, nfs_host, nfs_share, mount_options
+        )
+        evidence.append(f"--- direct restore readiness {part} -> {target} ---\n{ready_ev}")
+        if not ready_ok:
+            return False, "\n".join(evidence)[-_EVIDENCE_CAP:]
+
         state["current_partition"] = part
         state["partition_index"] = parts.index(part) + 1
         state["partition_percent"] = 0.0
@@ -1315,6 +1414,24 @@ def _direct_partclone_restore(
             speed_state,
             timeout,
         )
+        if not ok and _restore_failure_allows_direct_read_retry(ev):
+            evidence.append(f"direct restore {part}: image read/path error detected; remounting and retrying")
+            ready_ok, ready_ev = _prepare_direct_restore_attempt(
+                device, number, files, nfs_host, nfs_share, mount_options
+            )
+            evidence.append(f"--- direct restore retry readiness {part} -> {target} ---\n{ready_ev}")
+            if ready_ok:
+                state["last_line"] = f"Retrying {part} after image read/path check"
+                _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+                ok, ev = _run_direct_restore_command(
+                    shell_body,
+                    state,
+                    image_dir,
+                    progress_callback,
+                    started,
+                    speed_state,
+                    timeout,
+                )
         if not ok and kind != "raw" and _restore_failure_allows_crc_salvage(ev):
             evidence.append(f"direct restore {part}: CRC/broken image detected; retrying with --ignore_crc")
             state["last_line"] = f"Retrying {part} without Partclone CRC check"
@@ -1329,6 +1446,26 @@ def _direct_partclone_restore(
                 speed_state,
                 timeout,
             )
+            if not ok and _restore_failure_allows_direct_read_retry(ev):
+                evidence.append(
+                    f"direct restore {part}: image read/path error during CRC-salvage retry; remounting and retrying"
+                )
+                ready_ok, ready_ev = _prepare_direct_restore_attempt(
+                    device, number, files, nfs_host, nfs_share, mount_options
+                )
+                evidence.append(f"--- direct restore CRC retry readiness {part} -> {target} ---\n{ready_ev}")
+                if ready_ok:
+                    state["last_line"] = f"Retrying {part} after image read/path check"
+                    _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+                    ok, ev = _run_direct_restore_command(
+                        shell_body,
+                        state,
+                        image_dir,
+                        progress_callback,
+                        started,
+                        speed_state,
+                        timeout,
+                    )
         evidence.append(f"--- direct restore {part} -> {target} ---\n{ev}")
         if not ok:
             return False, "\n".join(evidence)[-_EVIDENCE_CAP:]
@@ -1861,7 +1998,13 @@ def run_restore(
         }
 
     ok_r, restore_ev = _ocs_restoredisk(
-        image_subdir, device, image_dir=image_dir, progress_callback=progress_callback,
+        image_subdir,
+        device,
+        image_dir=image_dir,
+        progress_callback=progress_callback,
+        nfs_host=nfs_host,
+        nfs_share=nfs_share,
+        mount_options=mount_options,
     )
     duration = int(time.monotonic() - started_ts)
     if not ok_r:

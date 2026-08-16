@@ -62,7 +62,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v11"
+RESTORE_CLIENT_BUILD = "restore-track-v12"
 
 
 def _now_iso() -> str:
@@ -1062,8 +1062,9 @@ def _prepare_target_windows_gpt_from_image(
 def _image_files_for_part(image_dir: str, part: str) -> tuple[list[str], str, str]:
     """Return Clonezilla image split files for one partition.
 
-    The kind is either ``partclone`` or ``raw``. The compression value is one of
-    ``xz``, ``gzip``, ``zstd``, or ``none``.
+    The kind is the Clonezilla partclone filesystem token, such as ``ntfs``,
+    ``vfat``, or ``dd``. The compression value is one of ``xz``, ``gzip``,
+    ``zstd``, or ``none``.
     """
     try:
         names = os.listdir(image_dir)
@@ -1083,7 +1084,8 @@ def _image_files_for_part(image_dir: str, part: str) -> tuple[list[str], str, st
         return [], "", ""
     candidates.sort()
     sample = os.path.basename(candidates[0]).lower()
-    kind = "partclone" if "-ptcl-img" in sample else "raw"
+    fs_match = re.match(rf"{re.escape(part.lower())}\.([a-z0-9_+\-]+)-ptcl-img", sample)
+    kind = fs_match.group(1) if fs_match else "raw"
     compression = "none"
     if ".xz" in sample:
         compression = "xz"
@@ -1092,6 +1094,11 @@ def _image_files_for_part(image_dir: str, part: str) -> tuple[list[str], str, st
     elif ".zst" in sample or ".zstd" in sample:
         compression = "zstd"
     return candidates, kind, compression
+
+
+def _partclone_log_path(part: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.+-]", "_", part or "partition")
+    return f"/tmp/vstl-partclone-{safe}.log"
 
 
 def _stream_decode_shell(files: list[str], compression: str) -> str:
@@ -1172,6 +1179,27 @@ def _run_direct_restore_command(
     return rc_value == 0, "\n".join(evidence_lines)[-_EVIDENCE_CAP:]
 
 
+def _partclone_restore_shell(stream: str, kind: str, target: str, part: str) -> str:
+    log_path = _partclone_log_path(part)
+    q_log = shlex.quote(log_path)
+    q_target = shlex.quote(target)
+    if kind == "raw":
+        restore_cmd = f"dd of={q_target} bs=16M conv=fsync status=none"
+    elif kind == "dd":
+        restore_cmd = f"partclone.dd -C -L {q_log} -s - -o {q_target}"
+    else:
+        tool = "partclone." + re.sub(r"[^A-Za-z0-9_+.-]", "", kind)
+        restore_cmd = f"{tool} -C -L {q_log} -s - -r -o {q_target}"
+    return (
+        f"rm -f {q_log}; "
+        f"{stream} | {restore_cmd}; "
+        "rc=$?; "
+        f"if [ $rc -ne 0 ]; then echo '--- partclone log {part} ---'; "
+        f"tail -120 {q_log} 2>/dev/null || true; fi; "
+        "exit $rc"
+    )
+
+
 def _direct_partclone_restore(
     image_dir: str,
     device: str,
@@ -1232,10 +1260,7 @@ def _direct_partclone_restore(
         _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
 
         stream = _stream_decode_shell(files, compression)
-        if kind == "partclone":
-            shell_body = f"{stream} | partclone.restore -s - -o {shlex.quote(target)}"
-        else:
-            shell_body = f"{stream} | dd of={shlex.quote(target)} bs=16M conv=fsync status=none"
+        shell_body = _partclone_restore_shell(stream, kind, target, part)
         ok, ev = _run_direct_restore_command(
             shell_body,
             state,

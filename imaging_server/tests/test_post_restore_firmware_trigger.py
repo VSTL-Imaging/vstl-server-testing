@@ -325,10 +325,11 @@ def test_non_precreated_restore_attempt_aborts_immediately_for_direct_fallback(m
 def test_direct_partclone_restore_streams_split_xz_images(monkeypatch, tmp_path):
     image_dir = tmp_path / "image"
     image_dir.mkdir()
-    (image_dir / "parts").write_text("nvme0n1p1 nvme0n1p2\n", encoding="utf-8")
+    (image_dir / "parts").write_text("nvme0n1p1 nvme0n1p2 nvme0n1p3\n", encoding="utf-8")
     (image_dir / "nvme0n1p1.vfat-ptcl-img.xz.aa").write_text("efi", encoding="utf-8")
     (image_dir / "nvme0n1p2.ntfs-ptcl-img.xz.aa").write_text("win-a", encoding="utf-8")
     (image_dir / "nvme0n1p2.ntfs-ptcl-img.xz.ab").write_text("win-b", encoding="utf-8")
+    (image_dir / "nvme0n1p3.dd-ptcl-img.xz.aa").write_text("msr", encoding="utf-8")
     commands = []
     maintenance = []
 
@@ -352,11 +353,12 @@ def test_direct_partclone_restore_streams_split_xz_images(monkeypatch, tmp_path)
     ok, evidence = ir._direct_partclone_restore(str(image_dir), "/dev/nvme0n1")
 
     assert ok is True
-    assert len(commands) == 2
-    assert "xz -dc | partclone.restore -s - -o /dev/nvme0n1p1" in commands[0]
+    assert len(commands) == 3
+    assert "xz -dc | partclone.vfat -C -L /tmp/vstl-partclone-nvme0n1p1.log -s - -r -o /dev/nvme0n1p1" in commands[0]
     assert "nvme0n1p2.ntfs-ptcl-img.xz.aa" in commands[1]
     assert "nvme0n1p2.ntfs-ptcl-img.xz.ab" in commands[1]
-    assert "partclone.restore -s - -o /dev/nvme0n1p2" in commands[1]
+    assert "partclone.ntfs -C -L /tmp/vstl-partclone-nvme0n1p2.log -s - -r -o /dev/nvme0n1p2" in commands[1]
+    assert "partclone.dd -C -L /tmp/vstl-partclone-nvme0n1p3.log -s - -o /dev/nvme0n1p3" in commands[2]
     assert ["partprobe", "/dev/nvme0n1"] in maintenance
     assert "precreated target GPT" in evidence
 

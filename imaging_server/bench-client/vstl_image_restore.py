@@ -63,7 +63,11 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v16"
+RESTORE_CLIENT_BUILD = "restore-track-v17"
+RESTORE_NFS_MOUNT_OPTIONS = (
+    "rw,nolock,vers=3,proto=tcp,hard,timeo=600,retrans=5,"
+    "rsize=1048576,wsize=1048576"
+)
 
 
 def _now_iso() -> str:
@@ -437,6 +441,8 @@ def _restore_failure_allows_crc_salvage(evidence: str) -> bool:
 def _restore_failure_allows_direct_read_retry(evidence: str) -> bool:
     text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", evidence or "").lower()
     markers = (
+        "brokenpipeerror",
+        "broken pipe",
         "read error:no such file or directory",
         "read error: no such file or directory",
         "source read error",
@@ -1170,10 +1176,15 @@ def _concat_stream_shell(files: list[str], mode: str = "cat") -> str:
     quoted_files = " ".join(shlex.quote(path) for path in files)
     if mode == "python":
         streamer = (
-            "import shutil,sys; "
-            "out=sys.stdout.buffer; "
-            "buf=8*1024*1024; "
-            "[shutil.copyfileobj(open(p,'rb'), out, buf) for p in sys.argv[1:]]"
+            "import shutil,sys\n"
+            "out=sys.stdout.buffer\n"
+            "buf=8*1024*1024\n"
+            "try:\n"
+            "    for p in sys.argv[1:]:\n"
+            "        with open(p,'rb') as f:\n"
+            "            shutil.copyfileobj(f, out, buf)\n"
+            "except BrokenPipeError:\n"
+            "    sys.exit(141)\n"
         )
         return f"python3 -c {shlex.quote(streamer)} {quoted_files}"
     return f"cat {quoted_files}"
@@ -1207,7 +1218,7 @@ def _ensure_direct_files_readable(
     files: list[str],
     nfs_host: str = "",
     nfs_share: str = "",
-    mount_options: str = "rw,nolock,vers=3",
+    mount_options: str = RESTORE_NFS_MOUNT_OPTIONS,
 ) -> tuple[bool, str]:
     ok, ev = _direct_files_readable(files)
     if ok:
@@ -1232,7 +1243,7 @@ def _prepare_direct_restore_attempt(
     files: list[str],
     nfs_host: str = "",
     nfs_share: str = "",
-    mount_options: str = "rw,nolock,vers=3",
+    mount_options: str = RESTORE_NFS_MOUNT_OPTIONS,
 ) -> tuple[bool, str]:
     node_ok, node_ev = _wait_for_partition_node(device, number)
     read_ok, read_ev = _ensure_direct_files_readable(files, nfs_host, nfs_share, mount_options)
@@ -1360,7 +1371,7 @@ def _direct_partclone_restore(
     timeout: int = 4 * 3600,
     nfs_host: str = "",
     nfs_share: str = "",
-    mount_options: str = "rw,nolock,vers=3",
+    mount_options: str = RESTORE_NFS_MOUNT_OPTIONS,
 ) -> tuple[bool, str]:
     """Fallback restore path that bypasses Clonezilla's restoredisk wrapper.
 
@@ -1961,7 +1972,7 @@ def run_restore(
     device: str,
     nfs_host: str,
     nfs_share: str,
-    mount_options: str = "rw,nolock,vers=3",
+    mount_options: str = RESTORE_NFS_MOUNT_OPTIONS,
     golden_copy_id: str = "",
     golden_copy: Optional[dict] = None,
     progress_callback: Optional[Callable[[dict], None]] = None,

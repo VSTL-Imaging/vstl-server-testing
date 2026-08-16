@@ -7338,6 +7338,18 @@ def _fallback_nfs_settings(cfg: dict) -> dict:
     }
 
 
+def _restore_nfs_settings(nfs_settings: dict) -> dict:
+    settings = dict(nfs_settings or {})
+    restore_options = (
+        settings.get("restore_mount_options")
+        or os.environ.get("VSTL_RESTORE_NFS_OPTIONS")
+        or getattr(ir, "RESTORE_NFS_MOUNT_OPTIONS", "")
+        or "rw,nolock,vers=3,proto=tcp,hard,timeo=600,retrans=5,rsize=1048576,wsize=1048576"
+    )
+    settings["mount_options"] = restore_options
+    return settings
+
+
 def _get_bench_nfs_settings(cfg: dict) -> dict:
     """Return backend NFS settings, silently falling back to local FOG defaults."""
     ok_s, nfs_settings, _err = _api_get("/imaging/bench-settings", cfg)
@@ -7547,7 +7559,7 @@ def _merge_secure_erase_certificate(
 def _restore_backup_available(stdscr, ident: dict, cfg: dict,
                               cpu_info: Optional[dict] = None) -> bool:
     """Block restore before QC/erase when no exact or fallback image exists."""
-    nfs_settings = _get_bench_nfs_settings(cfg)
+    nfs_settings = _restore_nfs_settings(_get_bench_nfs_settings(cfg))
     local_lookup = ir.find_local_golden_copies(
         nfs_settings.get("nfs_host", ""),
         nfs_settings.get("nfs_share", ""),
@@ -9300,7 +9312,7 @@ def phase3_restore(stdscr, ident: dict, cfg: dict,
        lookup golden copy -> mount NFS -> restore -> POST result.
     The Server Process lookup order is exact SKU/Unit Part Number first,
     then exact Model Name + exact CPU fallback."""
-    nfs_settings = _get_bench_nfs_settings(cfg)
+    nfs_settings = _restore_nfs_settings(_get_bench_nfs_settings(cfg))
     drive = se.detect_primary_drive()
     if not drive.get("device"):
         _show_message(stdscr,
@@ -9764,7 +9776,7 @@ def run_testing_restore_only(stdscr, cfg: dict) -> str:
 
     selected_golden_copy: dict | None = None
     if selection_mode == "manual":
-        nfs_settings = _get_bench_nfs_settings(cfg)
+        nfs_settings = _restore_nfs_settings(_get_bench_nfs_settings(cfg))
         lookup = ir.list_local_original_golden_copies(
             nfs_settings.get("nfs_host", ""),
             nfs_settings.get("nfs_share", ""),

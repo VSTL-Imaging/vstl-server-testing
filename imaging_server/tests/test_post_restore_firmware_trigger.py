@@ -510,6 +510,38 @@ def test_direct_partclone_restore_retries_read_path_error(monkeypatch, tmp_path)
     assert "image read/path error detected" in evidence
 
 
+def test_direct_partclone_restore_retries_broken_pipe(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "parts").write_text("nvme0n1p1\n", encoding="utf-8")
+    (image_dir / "nvme0n1p1.vfat-ptcl-img.xz.aa").write_text("efi", encoding="utf-8")
+    commands = []
+
+    monkeypatch.setattr(
+        ir,
+        "_prepare_target_windows_gpt_from_image",
+        lambda *args, **kwargs: (True, True, "precreated target GPT"),
+    )
+    monkeypatch.setattr(ir, "_wait_for_partition_node", lambda *args, **kwargs: (True, "ready"))
+    monkeypatch.setattr(ir, "_ensure_direct_files_readable", lambda *args, **kwargs: (True, "readable"))
+    monkeypatch.setattr(ir, "_run", lambda *args, **kwargs: (0, "", ""))
+
+    def fake_stream(shell_body, state, image_path, progress_callback, started, speed_state, timeout):
+        commands.append(shell_body)
+        if len(commands) == 1:
+            return False, "BrokenPipeError: [Errno 32] Broken pipe\nPartclone fail\nrc=141"
+        return True, "stream ok"
+
+    monkeypatch.setattr(ir, "_run_direct_restore_command", fake_stream)
+
+    ok, evidence = ir._direct_partclone_restore(str(image_dir), "/dev/nvme0n1")
+
+    assert ok is True
+    assert len(commands) == 2
+    assert "python3 -c" in commands[1]
+    assert "image read/path error detected" in evidence
+
+
 def test_restore_does_not_retry_generic_precreated_layout_failure(monkeypatch):
     attempts = []
 

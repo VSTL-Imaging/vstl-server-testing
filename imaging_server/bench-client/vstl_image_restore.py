@@ -63,7 +63,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v19"
+RESTORE_CLIENT_BUILD = "restore-track-v20"
 RESTORE_NFS_MOUNT_OPTIONS = (
     "rw,nolock,vers=3,proto=tcp,hard,timeo=600,retrans=5,"
     "rsize=1048576,wsize=1048576"
@@ -1303,6 +1303,11 @@ def _partclone_log_path(part: str) -> str:
     return f"/tmp/vstl-partclone-{safe}.log"
 
 
+def _partclone_fifo_path(part: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.+-]", "_", part or "partition")
+    return f"/tmp/vstl-partclone-{safe}.fifo"
+
+
 def _concat_stream_shell(files: list[str], mode: str = "cat") -> str:
     quoted_files = " ".join(shlex.quote(path) for path in files)
     if mode == "python":
@@ -1475,22 +1480,37 @@ def _partclone_restore_shell(
     generic_restore: bool = False,
 ) -> str:
     log_path = _partclone_log_path(part)
+    fifo_path = _partclone_fifo_path(part)
     q_log = shlex.quote(log_path)
+    q_fifo = shlex.quote(fifo_path)
     q_target = shlex.quote(target)
     crc_arg = " --ignore_crc" if ignore_crc else ""
     if kind in {"raw", "dd"}:
         restore_cmd = f"dd of={q_target} bs=16M conv=fsync status=none"
+        return (
+            f"rm -f {q_log}; "
+            f"{stream} | {restore_cmd}; "
+            "rc=$?; "
+            "exit $rc"
+        )
     elif generic_restore:
-        restore_cmd = f"partclone.restore -C{crc_arg} -L {q_log} -s - -o {q_target}"
+        restore_cmd = f"partclone.restore -C{crc_arg} -L {q_log} -s {q_fifo} -o {q_target}"
     else:
         tool = "partclone." + re.sub(r"[^A-Za-z0-9_+.-]", "", kind)
-        restore_cmd = f"{tool} -C{crc_arg} -L {q_log} -s - -r -o {q_target}"
+        restore_cmd = f"{tool} -C{crc_arg} -L {q_log} -s {q_fifo} -r -o {q_target}"
     return (
-        f"rm -f {q_log}; "
-        f"{stream} | {restore_cmd}; "
+        f"rm -f {q_log} {q_fifo}; "
+        f"mkfifo {q_fifo}; "
+        f"({stream}) > {q_fifo} & producer=$!; "
+        f"{restore_cmd}; "
         "rc=$?; "
+        "if [ $rc -ne 0 ]; then kill $producer 2>/dev/null || true; fi; "
+        "wait $producer; producer_rc=$?; "
+        f"rm -f {q_fifo}; "
         f"if [ $rc -ne 0 ]; then echo '--- partclone log {part} ---'; "
         f"tail -120 {q_log} 2>/dev/null || true; fi; "
+        "if [ $rc -eq 0 ] && [ $producer_rc -ne 0 ] && [ $producer_rc -ne 141 ]; "
+        "then exit $producer_rc; fi; "
         "exit $rc"
     )
 

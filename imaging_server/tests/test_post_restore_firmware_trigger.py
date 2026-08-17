@@ -519,10 +519,12 @@ def test_direct_partclone_restore_streams_split_xz_images(monkeypatch, tmp_path)
 
     assert ok is True
     assert len(commands) == 3
-    assert "xz -dc | partclone.vfat -C -L /tmp/vstl-partclone-nvme0n1p1.log -s - -r -o /dev/nvme0n1p1" in commands[0]
+    assert "mkfifo /tmp/vstl-partclone-nvme0n1p1.fifo" in commands[0]
+    assert "xz -dc) > /tmp/vstl-partclone-nvme0n1p1.fifo" in commands[0]
+    assert "partclone.vfat -C -L /tmp/vstl-partclone-nvme0n1p1.log -s /tmp/vstl-partclone-nvme0n1p1.fifo -r -o /dev/nvme0n1p1" in commands[0]
     assert "nvme0n1p2.ntfs-ptcl-img.xz.aa" in commands[1]
     assert "nvme0n1p2.ntfs-ptcl-img.xz.ab" in commands[1]
-    assert "partclone.ntfs -C -L /tmp/vstl-partclone-nvme0n1p2.log -s - -r -o /dev/nvme0n1p2" in commands[1]
+    assert "partclone.ntfs -C -L /tmp/vstl-partclone-nvme0n1p2.log -s /tmp/vstl-partclone-nvme0n1p2.fifo -r -o /dev/nvme0n1p2" in commands[1]
     assert "xz -dc | dd of=/dev/nvme0n1p3 bs=16M conv=fsync status=none" in commands[2]
     assert ["partprobe", "/dev/nvme0n1"] in maintenance
     assert "precreated target GPT" in evidence
@@ -615,7 +617,7 @@ def test_direct_partclone_restore_retries_read_path_error(monkeypatch, tmp_path)
     assert len(commands) == 2
     assert "--ignore_crc" not in commands[1]
     assert "python3 -c" in commands[1]
-    assert "partclone.restore -C -L /tmp/vstl-partclone-nvme0n1p1.log -s - -o /dev/nvme0n1p1" in commands[1]
+    assert "partclone.restore -C -L /tmp/vstl-partclone-nvme0n1p1.log -s /tmp/vstl-partclone-nvme0n1p1.fifo -o /dev/nvme0n1p1" in commands[1]
     assert len(readiness) == 2
     assert readiness[1][1:] == ("10.255.0.45", "/images/dev", "rw,nolock,vers=3,timeo=60")
     assert "image read/path error detected" in evidence

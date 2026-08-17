@@ -63,7 +63,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v20"
+RESTORE_CLIENT_BUILD = "restore-track-v21"
 RESTORE_NFS_MOUNT_OPTIONS = (
     "rw,nolock,vers=3,proto=tcp,hard,timeo=600,retrans=5,"
     "rsize=1048576,wsize=1048576"
@@ -1585,7 +1585,13 @@ def _direct_partclone_restore(
         _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
 
         stream = _stream_decode_shell(files, compression)
-        shell_body = _partclone_restore_shell(stream, kind, target, part)
+        shell_body = _partclone_restore_shell(
+            stream,
+            kind,
+            target,
+            part,
+            generic_restore=True,
+        )
         ok, ev = _run_direct_restore_command(
             shell_body,
             state,
@@ -1622,7 +1628,14 @@ def _direct_partclone_restore(
             evidence.append(f"direct restore {part}: CRC/broken image detected; retrying with --ignore_crc")
             state["last_line"] = f"Retrying {part} without Partclone CRC check"
             _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
-            shell_body = _partclone_restore_shell(stream, kind, target, part, ignore_crc=True)
+            shell_body = _partclone_restore_shell(
+                stream,
+                kind,
+                target,
+                part,
+                ignore_crc=True,
+                generic_restore=True,
+            )
             ok, ev = _run_direct_restore_command(
                 shell_body,
                 state,

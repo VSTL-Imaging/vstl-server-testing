@@ -257,6 +257,29 @@ run_network_setup || log "Network unavailable or operator selected offline mode"
 activate_tui_tty || clear_tui_tty
 TUI_RC=0
 
+open_recovery_shell_or_hold() {
+    local reason="$1"
+    log "$reason"
+    activate_tui_tty || clear_tui_tty
+    if [[ -c "$TUI_TTY" ]]; then
+        {
+            printf '\033c\033[?25h\033[H\033[2J\033[3J'
+            printf '\n  VSTL recovery shell\n\n'
+            printf '  %s\n\n' "$reason"
+            printf '  Type "reboot -f" to restart this unit.\n'
+            printf '  Type "journalctl -xb" or "cat %s" to inspect logs.\n\n' "$LOG_FILE"
+        } >"$TUI_TTY" 2>/dev/null || true
+        if [[ -x /bin/bash ]]; then
+            exec /bin/bash -li <"$TUI_TTY" >"$TUI_TTY" 2>&1
+        fi
+        if [[ -x /bin/sh ]]; then
+            exec /bin/sh -i <"$TUI_TTY" >"$TUI_TTY" 2>&1
+        fi
+    fi
+    log "No recovery shell could be opened; holding console to avoid live shutdown."
+    while true; do sleep 3600; done
+}
+
 # Touch controllers are exposed as evdev character devices. Clonezilla/live
 # images can preserve restrictive udev modes on some HID-over-I2C hardware,
 # even though this ephemeral bench workflow runs as root.
@@ -301,10 +324,10 @@ case "$TUI_RC" in
         fi
         ;;
     2)
-        log "TUI requested debug shell (operator pressed Q on completion screen)"
+        open_recovery_shell_or_hold "TUI requested debug shell (operator pressed Q on completion screen)"
         ;;
     *)
-        log "TUI failed unexpectedly — dropping to recovery shell so the operator can investigate"
+        open_recovery_shell_or_hold "TUI failed unexpectedly — dropping to recovery shell so the operator can investigate"
         ;;
 esac
 

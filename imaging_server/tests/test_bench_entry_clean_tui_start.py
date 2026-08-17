@@ -79,6 +79,17 @@ class BenchEntryCleanTuiStartTests(unittest.TestCase):
         self.assertIn('draw_footer(stdscr, "ENTER restart system   Q drop to shell")', TUI)
         self.assertNotIn('draw_footer(stdscr, "ENTER power off   Q drop to shell")', TUI)
 
+    def test_debug_and_failure_paths_open_recovery_shell_instead_of_live_shutdown(self):
+        self.assertIn("open_recovery_shell_or_hold", ENTRY)
+        self.assertIn("VSTL recovery shell", ENTRY)
+        self.assertIn('exec /bin/bash -li <"$TUI_TTY" >"$TUI_TTY" 2>&1', ENTRY)
+        self.assertIn('open_recovery_shell_or_hold "TUI requested debug shell', ENTRY)
+        self.assertIn('open_recovery_shell_or_hold "TUI failed unexpectedly', ENTRY)
+        debug_case = ENTRY[ENTRY.index("\n    2)"):ENTRY.index("\n    *)")]
+        failure_case = ENTRY[ENTRY.index("\n    *)"):ENTRY.index("\nesac")]
+        self.assertNotIn('exit "$TUI_RC"', debug_case)
+        self.assertNotIn('exit "$TUI_RC"', failure_case)
+
 
 if __name__ == "__main__":
     unittest.main()

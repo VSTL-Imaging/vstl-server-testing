@@ -158,6 +158,79 @@ def test_restore_precreate_retries_sgdisk_zap_after_stale_signatures(monkeypatch
     assert any(call[:3] == ["dd", "if=/dev/zero", "of=/dev/nvme0n1"] for call in calls)
 
 
+def test_restore_precreate_retries_gpt_create_after_cleanup(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "disk").write_text("nvme0n1\n", encoding="utf-8")
+    (image_dir / "nvme0n1-pt.sf").write_text(_latitude_5330_sfdisk_text(), encoding="utf-8")
+    calls = []
+    create_attempts = 0
+
+    def fake_run(argv, timeout=30):
+        nonlocal create_attempts
+        calls.append(argv)
+        if argv[:2] == ["blockdev", "--getsz"]:
+            return 0, "500118192\n", ""
+        if argv[:2] == ["blockdev", "--getss"]:
+            return 0, "512\n", ""
+        if argv[:2] == ["sgdisk", "--clear"]:
+            create_attempts += 1
+            if create_attempts == 1:
+                return 5, "", "unable to save GPT"
+        return 0, "", ""
+
+    monkeypatch.setattr(ir, "_run", fake_run)
+
+    ok, precreated, evidence = ir._prepare_target_windows_gpt_from_image(
+        str(image_dir), "/dev/nvme0n1"
+    )
+
+    assert ok is True
+    assert precreated is True
+    assert create_attempts == 2
+    assert "retrying GPT creation after cleanup" in evidence
+    assert calls.count(["sgdisk", "--zap-all", "/dev/nvme0n1"]) == 2
+
+
+def test_restore_precreate_can_use_fresh_guids_when_preserved_guids_fail(monkeypatch, tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "disk").write_text("nvme0n1\n", encoding="utf-8")
+    (image_dir / "nvme0n1-pt.sf").write_text(_latitude_5330_sfdisk_text(), encoding="utf-8")
+    calls = []
+    create_commands = []
+
+    def fake_run(argv, timeout=30):
+        calls.append(argv)
+        if argv[:2] == ["blockdev", "--getsz"]:
+            return 0, "500118192\n", ""
+        if argv[:2] == ["blockdev", "--getss"]:
+            return 0, "512\n", ""
+        if argv[:2] == ["sgdisk", "--clear"]:
+            create_commands.append(argv)
+            if any(arg.startswith("--disk-guid=") for arg in argv):
+                return 7, "", "GUID already in use"
+        return 0, "", ""
+
+    monkeypatch.setattr(ir, "_run", fake_run)
+
+    ok, precreated, evidence = ir._prepare_target_windows_gpt_from_image(
+        str(image_dir), "/dev/nvme0n1"
+    )
+
+    assert ok is True
+    assert precreated is True
+    assert len(create_commands) == 3
+    assert "retrying with fresh GPT/partition GUIDs" in evidence
+    assert "precreated target GPT with fresh disk/partition GUIDs" in evidence
+    fresh_command = create_commands[-1]
+    assert not any(arg.startswith("--disk-guid=") for arg in fresh_command)
+    assert not any(arg.startswith("--partition-guid=") for arg in fresh_command)
+    assert "--typecode=4:DE94BBA4-06D1-4D40-A16A-BFD50179D6AC" in fresh_command
+    assert "--attributes=4:set:0" in fresh_command
+    assert "--attributes=4:set:63" in fresh_command
+
+
 def test_restore_precreate_skips_non_windows_layout(monkeypatch, tmp_path):
     image_dir = tmp_path / "image"
     image_dir.mkdir()

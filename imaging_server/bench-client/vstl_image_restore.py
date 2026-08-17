@@ -63,7 +63,7 @@ from vstl_image_capture import (
 
 
 BENCH_USER_AGENT = "VSTL-Bench/2.0 (Linux; PXE; +https://vstl360.local)"
-RESTORE_CLIENT_BUILD = "restore-track-v18"
+RESTORE_CLIENT_BUILD = "restore-track-v19"
 RESTORE_NFS_MOUNT_OPTIONS = (
     "rw,nolock,vers=3,proto=tcp,hard,timeo=600,retrans=5,"
     "rsize=1048576,wsize=1048576"
@@ -856,13 +856,13 @@ def _sgdisk_attribute_args(number: int, attrs: str) -> list[str]:
     return [f"--attributes={number}:set:{bit}" for bit in sorted(bits)]
 
 
-def _sgdisk_metadata_args(number: int, part: dict) -> list[str]:
+def _sgdisk_metadata_args(number: int, part: dict, preserve_guids: bool = True) -> list[str]:
     args: list[str] = []
     if part.get("type"):
         args.append(f"--typecode={number}:{part['type']}")
     if part.get("name") is not None:
         args.append(f"--change-name={number}:{part.get('name') or ''}")
-    if part.get("uuid"):
+    if preserve_guids and part.get("uuid"):
         args.append(f"--partition-guid={number}:{part['uuid']}")
     args.extend(_sgdisk_attribute_args(number, part.get("attrs") or ""))
     return args
@@ -1081,6 +1081,73 @@ def _zap_target_disk_for_restore(device: str, evidence: list[str]) -> bool:
     return _append_restore_cmd_evidence(evidence, ["sgdisk", "--zap-all", device], timeout=60) == 0
 
 
+def _target_gpt_create_command(
+    table: dict,
+    target_parts: list[dict],
+    target_last_lba: int,
+    device: str,
+    preserve_guids: bool = True,
+) -> tuple[list[str], str]:
+    cmd = ["sgdisk", "--clear", "--set-alignment=1"]
+    if preserve_guids and table.get("label-id"):
+        cmd.append(f"--disk-guid={table['label-id']}")
+    for part in sorted(target_parts, key=lambda item: int(item.get("number") or 0)):
+        number = int(part.get("number") or 0)
+        start = int(part.get("start") or 0)
+        end = _part_end(part)
+        if number <= 0 or start <= 0 or end <= start or end > target_last_lba:
+            return [], f"precreate failed: invalid calculated partition {number}"
+        cmd.append(f"--new={number}:{start}:{end}")
+        cmd.extend(_sgdisk_metadata_args(number, part, preserve_guids=preserve_guids))
+    cmd.append(device)
+    return cmd, ""
+
+
+def _create_target_gpt_with_retries(
+    table: dict,
+    target_parts: list[dict],
+    target_last_lba: int,
+    device: str,
+    evidence: list[str],
+) -> bool:
+    if not _zap_target_disk_for_restore(device, evidence):
+        return False
+
+    attempts = [
+        (True, ""),
+        (True, "sgdisk create failed; retrying GPT creation after cleanup"),
+        (
+            False,
+            "sgdisk create failed with preserved GUIDs; "
+            "retrying with fresh GPT/partition GUIDs",
+        ),
+    ]
+    for index, (preserve_guids, retry_message) in enumerate(attempts):
+        if retry_message:
+            evidence.append(retry_message)
+            if not _zap_target_disk_for_restore(device, evidence):
+                return False
+
+        cmd, error = _target_gpt_create_command(
+            table,
+            target_parts,
+            target_last_lba,
+            device,
+            preserve_guids=preserve_guids,
+        )
+        if error:
+            evidence.append(error)
+            return False
+        rc = _append_restore_cmd_evidence(evidence, cmd, timeout=60, out_cap=500, err_cap=500)
+        if rc == 0:
+            if not preserve_guids:
+                evidence.append("precreated target GPT with fresh disk/partition GUIDs")
+            return True
+        if index == len(attempts) - 1:
+            break
+    return False
+
+
 def _prepare_target_windows_gpt_from_image(
     image_dir: str,
     device: str,
@@ -1173,25 +1240,13 @@ def _prepare_target_windows_gpt_from_image(
         target_parts.append(target)
 
     _emit_restore_stage(progress_callback, "Pre-restore: creating target Windows GPT")
-    if not _zap_target_disk_for_restore(device, evidence):
-        return False, False, "\n".join(evidence)
-
-    cmd = ["sgdisk", "--clear", "--set-alignment=1"]
-    if table.get("label-id"):
-        cmd.append(f"--disk-guid={table['label-id']}")
-    for part in sorted(target_parts, key=lambda item: int(item.get("number") or 0)):
-        number = int(part.get("number") or 0)
-        start = int(part.get("start") or 0)
-        end = _part_end(part)
-        if number <= 0 or start <= 0 or end <= start or end > target_last_lba:
-            evidence.append(f"precreate failed: invalid calculated partition {number}")
-            return False, False, "\n".join(evidence)
-        cmd.append(f"--new={number}:{start}:{end}")
-        cmd.extend(_sgdisk_metadata_args(number, part))
-    cmd.append(device)
-    rc, out, err = _run(cmd, timeout=60)
-    evidence.append(f"$ {' '.join(cmd)} rc={rc} {out[:500]} {err[:500]}")
-    if rc != 0:
+    if not _create_target_gpt_with_retries(
+        table,
+        target_parts,
+        target_last_lba,
+        device,
+        evidence,
+    ):
         return False, False, "\n".join(evidence)
 
     _run(["sgdisk", "-e", device], timeout=30)

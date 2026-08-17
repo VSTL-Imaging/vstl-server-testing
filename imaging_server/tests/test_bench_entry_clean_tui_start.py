@@ -36,6 +36,14 @@ class BenchEntryCleanTuiStartTests(unittest.TestCase):
         tui_pos = ENTRY.index('python3 "$TUI_PATH"')
         self.assertLess(keepalive_pos, tui_pos)
 
+    def test_entry_mutes_kernel_console_before_curses(self):
+        self.assertIn("quiet_kernel_console", ENTRY)
+        self.assertIn("dmesg -D", ENTRY)
+        self.assertIn("/proc/sys/kernel/printk", ENTRY)
+        quiet_pos = ENTRY.index("quiet_kernel_console")
+        tui_pos = ENTRY.index('python3 "$TUI_PATH"')
+        self.assertLess(quiet_pos, tui_pos)
+
     def test_entry_applies_large_console_font(self):
         self.assertIn("apply_console_font", ENTRY)
         self.assertIn("VSTL_CONSOLE_FONT", ENTRY)

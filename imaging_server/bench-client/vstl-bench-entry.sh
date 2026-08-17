@@ -128,11 +128,21 @@ keep_operator_console_awake() {
     done
 }
 
+quiet_kernel_console() {
+    # Hardware/driver traces must stay available in dmesg/journal, but they
+    # must not print over the curses bench UI while restore/erase is running.
+    if command -v dmesg >/dev/null 2>&1; then
+        dmesg -D >/dev/null 2>&1 || dmesg -n 1 >/dev/null 2>&1 || true
+    fi
+    printf '1 4 1 7\n' > /proc/sys/kernel/printk 2>/dev/null || true
+}
+
 if ! take_single_instance_lock; then
     wait_for_existing_instance
     exit 0
 fi
 trap cleanup_single_instance_lock EXIT
+quiet_kernel_console
 keep_operator_console_awake
 
 # ---------- 1. Config ----------------------------------------------------------
@@ -189,6 +199,7 @@ activate_tui_tty() {
     fi
 
     stty sane <"$TUI_TTY" >"$TUI_TTY" 2>/dev/null || true
+    quiet_kernel_console
     keep_operator_console_awake
     apply_console_font
     clear_tui_tty
@@ -202,6 +213,7 @@ activate_tui_tty() {
     fi
 
     stty sane <"$TUI_TTY" >"$TUI_TTY" 2>/dev/null || true
+    quiet_kernel_console
     keep_operator_console_awake
     apply_console_font
     clear_tui_tty
@@ -268,6 +280,7 @@ open_recovery_shell_or_hold() {
             printf '  %s\n\n' "$reason"
             printf '  Type "reboot -f" to restart this unit.\n'
             printf '  Type "journalctl -xb" or "cat %s" to inspect logs.\n\n' "$LOG_FILE"
+            printf '  Kernel messages are muted on this screen; use "dmesg" to inspect them.\n\n'
         } >"$TUI_TTY" 2>/dev/null || true
         if [[ -x /bin/bash ]]; then
             exec /bin/bash -li <"$TUI_TTY" >"$TUI_TTY" 2>&1

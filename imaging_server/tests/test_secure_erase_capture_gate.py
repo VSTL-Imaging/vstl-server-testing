@@ -309,6 +309,16 @@ def test_capture_retries_partclone_failure_with_ntfsclone_fallback():
     )
 
 
+def test_capture_retry_ignores_clonezilla_generic_storage_hints():
+    evidence = """
+If this action fails or hangs, check:
+* Is the disk full ?
+* Network connection and NFS service.
+Partclone fail, please check /var/log/clonezilla//partclone.log !
+"""
+    assert capture._capture_failure_should_retry_with_ntfsclone(evidence)
+
+
 def test_capture_ntfsclone_fallback_command_keeps_partclone_for_other_partitions():
     cmd = capture._capture_savedisk_cmd(
         "/dev/nvme0n1",

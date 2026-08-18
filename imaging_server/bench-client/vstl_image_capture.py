@@ -1553,10 +1553,16 @@ _CAPTURE_PARTCLONE_FAILURE_MARKERS = (
 )
 _CAPTURE_NO_RETRY_MARKERS = (
     "no space left",
-    "disk full",
     "permission denied",
     "read-only file system",
-    "nfs service",
+    "cannot create",
+    "cannot write",
+    "write error",
+)
+_CAPTURE_GENERIC_HELP_MARKERS = (
+    "if this action fails or hangs, check",
+    "is the disk full ?",
+    "network connection and nfs service",
 )
 _CLONEZILLA_CONTINUE_PROMPTS = (
     "press enter to continue",
@@ -1570,7 +1576,12 @@ def _plain_ocs_text(text: str) -> str:
 
 
 def _capture_failure_should_retry_with_ntfsclone(evidence: str) -> bool:
-    text = _plain_ocs_text(evidence)
+    meaningful_lines = [
+        line
+        for line in _plain_ocs_text(evidence).splitlines()
+        if not any(marker in line for marker in _CAPTURE_GENERIC_HELP_MARKERS)
+    ]
+    text = "\n".join(meaningful_lines)
     if any(marker in text for marker in _CAPTURE_NO_RETRY_MARKERS):
         return False
     return any(marker in text for marker in _CAPTURE_PARTCLONE_FAILURE_MARKERS)

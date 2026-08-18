@@ -38,6 +38,7 @@ import os
 import re
 import select
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -1544,29 +1545,93 @@ def _emit_capture_progress(progress_callback: Optional[Callable[[dict], None]],
     progress_callback(dict(state))
 
 
-def _ocs_savedisk(device: str, image_dir: str,
-                   progress_callback: Optional[Callable[[dict], None]] = None,
-                   timeout: int = 4 * 3600) -> tuple[bool, str, str]:
-    """Run Clonezilla ``ocs-sr savedisk`` for ``device`` into a new
-    sub-directory under ``image_dir``. Returns (ok, image_subdir, evidence).
-    """
-    # device "/dev/nvme0n1" -> Clonezilla device name "nvme0n1"
+_CAPTURE_PARTCLONE_FAILURE_MARKERS = (
+    "failed to use partclone program to save or restore an image",
+    "failed to save partition",
+    "partclone fail",
+    "partclone failed",
+)
+_CAPTURE_NO_RETRY_MARKERS = (
+    "no space left",
+    "disk full",
+    "permission denied",
+    "read-only file system",
+    "nfs service",
+)
+_CLONEZILLA_CONTINUE_PROMPTS = (
+    "press enter to continue",
+    "press \"enter\" to continue",
+    "press 'enter' to continue",
+)
+
+
+def _plain_ocs_text(text: str) -> str:
+    return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text or "").lower()
+
+
+def _capture_failure_should_retry_with_ntfsclone(evidence: str) -> bool:
+    text = _plain_ocs_text(evidence)
+    if any(marker in text for marker in _CAPTURE_NO_RETRY_MARKERS):
+        return False
+    return any(marker in text for marker in _CAPTURE_PARTCLONE_FAILURE_MARKERS)
+
+
+def _capture_savedisk_cmd(device: str, image_subdir: str, method: str) -> list[str]:
     dev_name = os.path.basename(device)
-    image_subdir = os.path.basename(image_dir.rstrip("/"))
-    # ocs-sr canonical no-interaction flags from Clonezilla docs:
-    #   -q2          partclone preferred
-    #   -j2          create EFI NVRAM backup
-    #   -rm-win-swap-hib  remove pagefile / hibernation
-    #   -z5p         parallel zstd level 5
-    #   -i 4096      split images at 4 GB
-    #   -p true      return to the VSTL TUI instead of Clonezilla's blue menu
-#   -batch       do not drop into Clonezilla dialogs/choose-mode screens
-    cmd = [
+    # Primary path stays Partclone. The fallback keeps Partclone available for
+    # non-NTFS partitions, but uses ntfsclone --force --rescue for NTFS.
+    clone_flags = ["-q2"]
+    if method == "ntfsclone_fallback":
+        clone_flags = ["-q", "-q2", "-ntfs-ok", "-rescue"]
+    return [
         "ocs-sr", "-batch", "--nogui", "-or", _NFS_MOUNT_POINT,
-        "-q2", "-j2", "-rm-win-swap-hib",
+        *clone_flags,
+        "-j2", "-rm-win-swap-hib",
         "-z5p", "-i", "4096", "-p", "true",
         "savedisk", image_subdir, dev_name,
     ]
+
+
+def _send_clonezilla_continue(proc: subprocess.Popen, evidence_lines: list[str],
+                              reason: str) -> bool:
+    if proc.stdin is None:
+        return False
+    try:
+        proc.stdin.write(b"\n")
+        proc.stdin.flush()
+        evidence_lines.append(f"sent Clonezilla continue ({reason})")
+        return True
+    except (BrokenPipeError, OSError):
+        return False
+
+
+def _terminate_capture_process(proc: subprocess.Popen) -> None:
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGTERM)
+            time.sleep(0.5)
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+            return
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        proc.terminate()
+        time.sleep(0.5)
+        if proc.poll() is None:
+            proc.kill()
+    except OSError:
+        pass
+
+
+def _ocs_savedisk_once(device: str, image_dir: str,
+                       progress_callback: Optional[Callable[[dict], None]] = None,
+                       timeout: int = 4 * 3600,
+                       method: str = "partclone",
+                       allow_partclone_retry: bool = False) -> tuple[bool, str, str]:
+    """Run one Clonezilla ``ocs-sr savedisk`` attempt."""
+    image_subdir = os.path.basename(image_dir.rstrip("/"))
+    cmd = _capture_savedisk_cmd(device, image_subdir, method)
     env = dict(os.environ)
     env.setdefault("OCS_ROOT", "/")
     env["OCSROOT"] = _NFS_MOUNT_POINT
@@ -1587,6 +1652,7 @@ def _ocs_savedisk(device: str, image_dir: str,
     }
     speed_state: dict = {}
     evidence_lines: list[str] = [
+        f"capture_method={method}",
         f"$ {' '.join(cmd)}",
         f"OCSROOT={env.get('OCSROOT')}",
     ]
@@ -1594,10 +1660,12 @@ def _ocs_savedisk(device: str, image_dir: str,
     try:
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
             env=env,
+            start_new_session=True,
         )
     except FileNotFoundError:
         return False, image_subdir, "ocs-sr: not found (is Clonezilla Live booted?)"
@@ -1607,11 +1675,13 @@ def _ocs_savedisk(device: str, image_dir: str,
     buffer = ""
     last_emit = 0.0
     timed_out = False
+    sent_continue = False
+    early_retry = False
     while True:
         now = time.monotonic()
         if now - started > timeout:
             timed_out = True
-            proc.kill()
+            _terminate_capture_process(proc)
             evidence_lines.append(f"ocs-sr timeout after {timeout}s")
             break
 
@@ -1624,6 +1694,11 @@ def _ocs_savedisk(device: str, image_dir: str,
             )
             if chunk:
                 buffer += chunk
+                if (
+                    not sent_continue
+                    and any(marker in _plain_ocs_text(buffer) for marker in _CLONEZILLA_CONTINUE_PROMPTS)
+                ):
+                    sent_continue = _send_clonezilla_continue(proc, evidence_lines, "prompt")
                 pieces = re.split(r"[\r\n]+", buffer)
                 buffer = pieces.pop() if pieces else ""
                 for piece in pieces:
@@ -1633,9 +1708,33 @@ def _ocs_savedisk(device: str, image_dir: str,
                     if len(evidence_lines) > 500:
                         evidence_lines = evidence_lines[-500:]
                     _update_capture_state_from_line(piece, state)
+                    if (
+                        allow_partclone_retry
+                        and _capture_failure_should_retry_with_ntfsclone(piece)
+                    ):
+                        early_retry = True
+                        state["phase"] = "retrying with NTFS clone fallback"
+                        state["last_line"] = (
+                            "Partclone capture failed; retrying Windows partition with ntfsclone"
+                        )
+                        evidence_lines.append(
+                            "detected Partclone capture failure; aborting this attempt for ntfsclone fallback"
+                        )
+                        _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
+                        _terminate_capture_process(proc)
+                        break
+                    if (
+                        not sent_continue
+                        and any(marker in _plain_ocs_text(piece) for marker in _CAPTURE_PARTCLONE_FAILURE_MARKERS)
+                    ):
+                        sent_continue = _send_clonezilla_continue(proc, evidence_lines, "failure marker")
+                if early_retry:
+                    break
             elif proc.poll() is not None:
                 break
 
+        if early_retry:
+            break
         if now - last_emit >= 1.0:
             _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
             last_emit = now
@@ -1647,6 +1746,8 @@ def _ocs_savedisk(device: str, image_dir: str,
         _update_capture_state_from_line(buffer, state)
 
     rc_value = proc.wait() if not timed_out else 124
+    if early_retry:
+        rc_value = 125
     elapsed = int(time.monotonic() - started)
     state["phase"] = "completed" if rc_value == 0 else "failed"
     state["elapsed_sec"] = elapsed
@@ -1662,6 +1763,79 @@ def _ocs_savedisk(device: str, image_dir: str,
         f"\nrc={rc_value}\nelapsed_sec={elapsed}"
     )
     return rc_value == 0, image_subdir, ev
+
+
+def _emit_capture_stage(progress_callback: Optional[Callable[[dict], None]],
+                        message: str) -> None:
+    if not progress_callback:
+        return
+    progress_callback({
+        "phase": message,
+        "last_line": message,
+        "partition_eta_sec": None,
+        "partition_eta_text": "--",
+        "network_rate": "--",
+    })
+
+
+def _ocs_savedisk(device: str, image_dir: str,
+                   progress_callback: Optional[Callable[[dict], None]] = None,
+                   timeout: int = 4 * 3600) -> tuple[bool, str, str]:
+    """Run Clonezilla ``ocs-sr savedisk`` with one NTFS-specific fallback."""
+    ok, image_subdir, evidence = _ocs_savedisk_once(
+        device,
+        image_dir,
+        progress_callback=progress_callback,
+        timeout=timeout,
+        method="partclone",
+        allow_partclone_retry=True,
+    )
+    if ok:
+        return ok, image_subdir, evidence
+
+    fallback_enabled = os.environ.get("VSTL_CAPTURE_NTFSCLONE_FALLBACK", "1").strip().lower()
+    if fallback_enabled in {"0", "false", "no", "off"}:
+        return False, image_subdir, evidence
+    if not _capture_failure_should_retry_with_ntfsclone(evidence):
+        return False, image_subdir, evidence
+
+    _emit_capture_stage(
+        progress_callback,
+        "Partclone capture failed; retrying with ntfsclone fallback",
+    )
+    shutil.rmtree(image_dir, ignore_errors=True)
+    retry_ok, retry_subdir, retry_ev = _ocs_savedisk_once(
+        device,
+        image_dir,
+        progress_callback=progress_callback,
+        timeout=timeout,
+        method="ntfsclone_fallback",
+        allow_partclone_retry=False,
+    )
+    combined = "\n".join([
+        evidence,
+        "--- retry with ntfsclone fallback ---",
+        retry_ev,
+    ])[-_EVIDENCE_CAP:]
+    return retry_ok, retry_subdir, combined
+
+
+def _quarantine_failed_capture(image_dir: str, evidence: str) -> str:
+    if not os.path.isdir(image_dir):
+        return ""
+    try:
+        marker = os.path.join(image_dir, "vstl_capture_failure.txt")
+        with open(marker, "w", encoding="utf-8", errors="replace") as f:
+            f.write((evidence or "")[-_EVIDENCE_CAP:])
+            f.write("\n")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        dest = f"{image_dir}_failed_{stamp}"
+        if os.path.exists(dest):
+            dest = f"{dest}_{uuid.uuid4().hex[:8]}"
+        os.rename(image_dir, dest)
+        return f"failed capture evidence preserved at {dest}"
+    except OSError as exc:
+        return f"failed capture evidence could not be preserved: {exc}"
 
 
 def run_capture(
@@ -1739,10 +1913,13 @@ def run_capture(
         device, image_dir, progress_callback=progress_callback,
     )
     if not ok_save:
-        shutil.rmtree(image_dir, ignore_errors=True)
+        quarantine_ev = _quarantine_failed_capture(image_dir, save_ev)
+        combined_ev = "\n---\n".join(
+            item for item in (mount_ev, save_ev, quarantine_ev) if item
+        )
         return _fail_result(device, started_at, started_ts,
                              error="ocs-sr savedisk failed",
-                             evidence="\n---\n".join([mount_ev, save_ev]))
+                             evidence=combined_ev)
 
     # Compute SHA-256 of the manifest file produced by Clonezilla (the
     # ``disk`` file lists every partclone image in the set â€” checksumming

@@ -300,6 +300,48 @@ def test_capture_refuses_to_mount_or_start_without_authorization():
     mount_nfs.assert_not_called()
 
 
+def test_capture_retries_partclone_failure_with_ntfsclone_fallback():
+    assert capture._capture_failure_should_retry_with_ntfsclone(
+        "Failed to use partclone program to save or restore an image!"
+    )
+    assert not capture._capture_failure_should_retry_with_ntfsclone(
+        "Failed to use partclone program to save or restore an image!\nNo space left on device"
+    )
+
+
+def test_capture_ntfsclone_fallback_command_keeps_partclone_for_other_partitions():
+    cmd = capture._capture_savedisk_cmd(
+        "/dev/nvme0n1",
+        "DELL_INC__LATITUDE_5330_0B03",
+        "ntfsclone_fallback",
+    )
+
+    assert "-q" in cmd
+    assert "-q2" in cmd
+    assert "-ntfs-ok" in cmd
+    assert "-rescue" in cmd
+    assert "savedisk" in cmd
+    assert cmd[-2:] == ["DELL_INC__LATITUDE_5330_0B03", "nvme0n1"]
+
+
+def test_capture_quarantines_failed_image_evidence(tmp_path):
+    image_dir = tmp_path / "IMAGE_A"
+    image_dir.mkdir()
+    (image_dir / "nvme0n1p3.ntfs-ptcl-img.xz.aa").write_bytes(b"\xfd7zXZ\x00")
+
+    note = capture._quarantine_failed_capture(
+        str(image_dir),
+        "Failed to use partclone program to save or restore an image!",
+    )
+
+    assert "failed capture evidence preserved" in note
+    assert not image_dir.exists()
+    failed_dirs = list(tmp_path.glob("IMAGE_A_failed_*"))
+    assert len(failed_dirs) == 1
+    marker = failed_dirs[0] / "vstl_capture_failure.txt"
+    assert "partclone program" in marker.read_text(encoding="utf-8")
+
+
 def test_drive_detection_returns_serial_wwn_and_exact_byte_capacity():
     lsblk = {
         "blockdevices": [

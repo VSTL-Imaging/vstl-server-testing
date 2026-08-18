@@ -241,6 +241,53 @@ def _box_scope_details(payload: dict, raw: dict) -> dict[str, str]:
 
 
 _LENOVO_MTM_RE = re.compile(r"^[0-9A-Z]{4}[0-9A-Z]{3,}$", re.I)
+_BRAND_ALIASES = (
+    (re.compile(r"\bDELL\b", re.I), "Dell"),
+    (re.compile(r"\bLENOVO\b", re.I), "Lenovo"),
+    (re.compile(r"\b(?:HP|HEWLETT[\s-]*PACKARD)\b", re.I), "HP"),
+)
+_BRAND_SUFFIX_RE = re.compile(
+    r"\b(?:incorporated|inc|corp|corporation|co|company|ltd|limited)\.?\b",
+    re.I,
+)
+
+
+def _normalize_brand_words(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", _text(value).casefold())).strip()
+
+
+def _brand_label_for_model(brand: str) -> str:
+    text = _text(brand)
+    if not text:
+        return ""
+    for pattern, label in _BRAND_ALIASES:
+        if pattern.search(text):
+            return label
+    cleaned = _BRAND_SUFFIX_RE.sub("", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
+    return cleaned or text
+
+
+def _model_has_brand_prefix(model: str, brand_label: str) -> bool:
+    model_norm = _normalize_brand_words(model)
+    brand_norm = _normalize_brand_words(brand_label)
+    variants = [brand_norm]
+    if brand_label == "HP":
+        variants.append("hewlett packard")
+    for variant in variants:
+        if variant and (model_norm == variant or model_norm.startswith(f"{variant} ")):
+            return True
+    return False
+
+
+def _brand_prefixed_model(model: str, brand: str) -> str:
+    model_text = _text(model)
+    brand_label = _brand_label_for_model(brand)
+    if not _has_value(model_text):
+        return brand_label
+    if not brand_label or _model_has_brand_prefix(model_text, brand_label):
+        return model_text
+    return f"{brand_label} {model_text}"
 
 
 def _lenovo_human_model_from_sku(sku: str) -> str:
@@ -268,12 +315,12 @@ def _normalized_identity_fields(payload: dict) -> tuple[str, str]:
         identity = raw["identity"]
         brand = _first_text(brand, identity.get("brand"), identity.get("manufacturer"))
     if "LENOVO" not in brand.upper():
-        return model, sku
+        return _brand_prefixed_model(model, brand), sku
     human_model = _lenovo_human_model_from_sku(sku)
     if not human_model:
-        return model, sku
+        return _brand_prefixed_model(model, brand), sku
     normalized_sku = model if _looks_like_lenovo_mtm(model) else sku
-    return human_model, normalized_sku
+    return _brand_prefixed_model(human_model, brand), normalized_sku
 
 
 def _parse_named_value(text: str, name: str) -> str:

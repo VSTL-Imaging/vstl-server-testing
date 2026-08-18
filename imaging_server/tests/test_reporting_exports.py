@@ -272,7 +272,7 @@ def test_flatten_corrects_lenovo_dmi_model_and_sku_swap():
     row = exporter.flatten({"payload": payload})
 
     assert row["SKU / Product Number"] == "20WLS1G400"
-    assert row["Model Name"] == "ThinkPad X13 Gen 2i"
+    assert row["Model Name"] == "Lenovo ThinkPad X13 Gen 2i"
 
 
 def test_flatten_keeps_non_lenovo_model_and_sku_unchanged():
@@ -284,7 +284,24 @@ def test_flatten_keeps_non_lenovo_model_and_sku_unchanged():
     row = exporter.flatten({"payload": payload})
 
     assert row["SKU / Product Number"] == "0B06"
-    assert row["Model Name"] == "Latitude 5530"
+    assert row["Model Name"] == "Dell Latitude 5530"
+
+
+def test_flatten_does_not_duplicate_brand_when_model_already_contains_brand():
+    payload = _sample_payload()
+    payload["brand"] = "HP"
+    payload["model"] = "HP EliteBook 850 G6"
+
+    row = exporter.flatten({"payload": payload})
+
+    assert row["Model Name"] == "HP EliteBook 850 G6"
+
+    payload["brand"] = "Dell Inc."
+    payload["model"] = "Dell Latitude 5530"
+
+    row = exporter.flatten({"payload": payload})
+
+    assert row["Model Name"] == "Dell Latitude 5530"
 
 
 def test_secure_erase_reg_id_falls_back_to_phase3_certificate_id():
@@ -794,7 +811,7 @@ def test_secure_erase_importer_backfills_nfs_records_and_export_dedupes(tmp_path
     rows = exporter.load_rows(data, "secure_erase")
     assert len(rows) == 1
     assert rows[0]["Serial Number"] == "1BZK2R2"
-    assert rows[0]["Model Name"] == "Latitude 5490"
+    assert rows[0]["Model Name"] == "Dell Latitude 5490"
     assert rows[0]["Secure Erase Reg ID"] == "SE-20260619-0742B2CEC01D2066"
     assert rows[0]["Wipe Method"] == "ATA_SANITIZE_BLOCK_ERASE"
     assert rows[0]["Date"] == "2026-06-19"
@@ -908,6 +925,6 @@ def test_capture_importer_backfills_nfs_capture_metadata(tmp_path):
     assert len(rows) == 1
     assert rows[0]["Operation"] == "Capture"
     assert rows[0]["Serial Number"] == "1BZK2R2"
-    assert rows[0]["Model Name"] == "Latitude 5490"
+    assert rows[0]["Model Name"] == "Dell Latitude 5490"
     assert rows[0]["CPU"] == "Intel Core i5-8350U @ 1.70GHz"
     assert rows[0]["Storage Type"] == "SATA_SSD"

@@ -1290,6 +1290,10 @@ def _update_capture_state_from_line(line: str, state: dict) -> None:
     state["last_line"] = clean[-140:]
     lower = clean.lower()
 
+    if "not saved by partclone" in lower and "skip checking" in lower:
+        state["last_line"] = "Skipped Partclone-only image check"
+        return
+
     if "program terminated" in lower:
         # partclone prints this when its per-partition worker exits normally;
         # Clonezilla's final process return code decides restore/capture success.
@@ -1593,7 +1597,7 @@ def _capture_savedisk_cmd(device: str, image_subdir: str, method: str) -> list[s
     # non-NTFS partitions, but uses ntfsclone --force --rescue for NTFS.
     clone_flags = ["-q2"]
     if method == "ntfsclone_fallback":
-        clone_flags = ["-q", "-q2", "-ntfs-ok", "-rescue"]
+        clone_flags = ["-q", "-q2", "-ntfs-ok", "-rescue", "-sc"]
     return [
         "ocs-sr", "-batch", "--nogui", "-or", _NFS_MOUNT_POINT,
         *clone_flags,

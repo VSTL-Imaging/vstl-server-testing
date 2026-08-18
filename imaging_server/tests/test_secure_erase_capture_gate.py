@@ -330,8 +330,34 @@ def test_capture_ntfsclone_fallback_command_keeps_partclone_for_other_partitions
     assert "-q2" in cmd
     assert "-ntfs-ok" in cmd
     assert "-rescue" in cmd
+    assert "-sc" in cmd
     assert "savedisk" in cmd
     assert cmd[-2:] == ["DELL_INC__LATITUDE_5330_0B03", "nvme0n1"]
+
+
+def test_capture_partclone_command_keeps_final_image_check_enabled():
+    cmd = capture._capture_savedisk_cmd(
+        "/dev/nvme0n1",
+        "DELL_INC__LATITUDE_5330_0B03",
+        "partclone",
+    )
+
+    assert "-q2" in cmd
+    assert "-sc" not in cmd
+    assert cmd[-2:] == ["DELL_INC__LATITUDE_5330_0B03", "nvme0n1"]
+
+
+def test_capture_parser_treats_ntfsclone_check_warning_as_benign():
+    state = {"last_line": "capturing nvme0n1p4"}
+
+    capture._update_capture_state_from_line(
+        "This partition image was not saved by partclone. "
+        "This program only works for the partition image saved by partclone. "
+        "Skip checking.",
+        state,
+    )
+
+    assert state["last_line"] == "Skipped Partclone-only image check"
 
 
 def test_capture_quarantines_failed_image_evidence(tmp_path):

@@ -41,10 +41,46 @@ def test_post_restore_firmware_script_uses_windows_update_driver_firmware_scan()
 
 def test_restore_uses_precreated_partition_table_mode_when_available():
     source = RESTORE_PATH.read_text(encoding="utf-8")
-    command = source[source.index('cmd = ['):source.index('env = dict(os.environ)')]
+    command = source[source.index('cmd = ['):source.index('return cmd, skip_partclone_check')]
     assert 'partition_mode, "-r"' in command
     assert '"-k1", "-r"' not in command
     assert 'partition_mode = "-k" if precreated_layout else "-k1"' in source
+
+
+def test_restore_skips_partclone_check_for_ntfsclone_fallback_images(tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "nvme0n1p1.vfat-ptcl-img.xz.aa").write_text("efi", encoding="utf-8")
+    (image_dir / "nvme0n1p3.ntfs-img.aa").write_text("windows", encoding="utf-8")
+
+    cmd, skip_check = ir._restoredisk_cmd(
+        "image",
+        "nvme0n1",
+        str(image_dir),
+        "-k",
+    )
+
+    assert skip_check is True
+    assert "-sc" in cmd
+    assert cmd[cmd.index("-sc") + 1] == "restoredisk"
+
+
+def test_restore_keeps_partclone_check_for_partclone_only_images(tmp_path):
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "nvme0n1p1.vfat-ptcl-img.xz.aa").write_text("efi", encoding="utf-8")
+    (image_dir / "nvme0n1p3.ntfs-ptcl-img.xz.aa").write_text("windows", encoding="utf-8")
+
+    cmd, skip_check = ir._restoredisk_cmd(
+        "image",
+        "nvme0n1",
+        str(image_dir),
+        "-k",
+    )
+
+    assert skip_check is False
+    assert "-sc" not in cmd
+    assert "restoredisk" in cmd
 
 
 def test_restore_precreates_target_sized_windows_gpt(monkeypatch, tmp_path):

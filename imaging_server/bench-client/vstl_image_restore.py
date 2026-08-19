@@ -473,6 +473,38 @@ def _terminate_restore_process(proc: subprocess.Popen) -> None:
         pass
 
 
+def _image_contains_ntfsclone_partitions(image_dir: str) -> bool:
+    """Return True for Clonezilla image sets containing ntfsclone files."""
+    try:
+        for name in os.listdir(image_dir):
+            if re.search(r"\.ntfs-img(?:\.|$)", name):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _restoredisk_cmd(
+    image_subdir: str,
+    dev_name: str,
+    image_dir: str,
+    partition_mode: str,
+    ignore_crc: bool = False,
+) -> tuple[list[str], bool]:
+    skip_partclone_check = _image_contains_ntfsclone_partitions(image_dir)
+    cmd = [
+        "ocs-sr", "-batch", "--nogui", "-or", _NFS_MOUNT_POINT,
+        "-g", "auto", "-e1", "auto", "-e2", partition_mode, "-r",
+        "-icds", "-j2", "-p", "true",
+        "restoredisk", image_subdir, dev_name,
+    ]
+    if skip_partclone_check:
+        cmd.insert(cmd.index("restoredisk"), "-sc")
+    if ignore_crc:
+        cmd.insert(cmd.index("restoredisk"), "-icrc")
+    return cmd, skip_partclone_check
+
+
 def _ocs_restoredisk_once(
     image_subdir: str,
     device: str,
@@ -494,14 +526,13 @@ def _ocs_restoredisk_once(
     if not prep_ok:
         return False, prep_ev, precreated_layout
     partition_mode = "-k" if precreated_layout else "-k1"
-    cmd = [
-        "ocs-sr", "-batch", "--nogui", "-or", _NFS_MOUNT_POINT,
-        "-g", "auto", "-e1", "auto", "-e2", partition_mode, "-r",
-        "-icds", "-j2", "-p", "true",
-        "restoredisk", image_subdir, dev_name,
-    ]
-    if ignore_crc:
-        cmd.insert(cmd.index("restoredisk"), "-icrc")
+    cmd, skip_partclone_check = _restoredisk_cmd(
+        image_subdir,
+        dev_name,
+        image_dir,
+        partition_mode,
+        ignore_crc=ignore_crc,
+    )
     env = dict(os.environ)
     env.setdefault("OCS_ROOT", "/")
     env["OCSROOT"] = _NFS_MOUNT_POINT
@@ -526,6 +557,7 @@ def _ocs_restoredisk_once(
         f"$ {' '.join(cmd)}",
         f"OCSROOT={env.get('OCSROOT')}",
         f"ignore_crc={ignore_crc}",
+        f"skip_partclone_check={skip_partclone_check}",
     ]
     _emit_capture_progress(progress_callback, state, started, image_dir, speed_state)
     try:
